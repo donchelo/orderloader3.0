@@ -26,3 +26,20 @@ Summary: Total Processed: 0, Total Errors: 0
 [2026-04-10T14:00:03.568Z] Pipeline finished.
 ✅ Step 0 (download): 0 processed, 0 errors, 0 skipped (1ms)
 Summary: Total Processed: 0, Total Errors: 0
+[2026-04-15T17:00:05.470Z] Starting scheduled pipeline run...
+[2026-04-15T17:00:05.524Z] Pipeline finished.
+✅ Step 0 (download): 0 processed, 0 errors, 0 skipped (2ms)
+Summary: Total Processed: 0, Total Errors: 0
+[2026-04-15T18:00:03.403Z] Starting scheduled pipeline run...
+[2026-04-15T18:00:03.453Z] Pipeline finished.
+✅ Step 0 (download): 0 processed, 0 errors, 0 skipped (2ms)
+✅ Step 6 (notify): 0 processed, 0 errors, 0 skipped (2ms)
+✅ Step 7 (archive): 0 processed, 0 errors, 0 skipped (0ms)
+Summary: Total Processed: 0, Total Errors: 0
+[2026-04-15T19:00:03.886Z] Starting scheduled pipeline run...
+DB migrada correctamente: /home/ai_tamaprint/Software/orderloader/.data/orderloader.db
+[2026-04-15T19:00:03.934Z] Pipeline finished.
+✅ Step 0 (download): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 6 (notify): 0 processed, 0 errors, 0 skipped (2ms)
+✅ Step 7 (archive): 0 processed, 0 errors, 0 skipped (0ms)
+Summary: Total Processed: 0, Total Errors: 0

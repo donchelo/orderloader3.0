@@ -1,4 +1,4 @@
-import { backupDb } from "./db";
+import { backupDb, migrate } from "./db";
 import { run as step0 } from "./steps/step0-download";
 import { run as step1 } from "./steps/step1-parse";
 import { run as step2 } from "./steps/step2-validate-parse";
@@ -23,8 +23,16 @@ export interface PipelineOptions {
   fromStep?: number;
   toStep?: number;
   onlyStep?: number;
+  maxIterations?: number;   // límite de correos por run (seguridad)
   onStep?: (result: StepResult) => void;
 }
+
+// ── Lock global para evitar runs simultáneos ──────────────────────────────
+let _running = false;
+let _stopRequested = false;
+
+export function isPipelineRunning(): boolean { return _running; }
+export function requestPipelineStop(): void  { _stopRequested = true; }
 
 const STEPS = [
   { n: 0, name: "download",       fn: step0 },
@@ -65,7 +73,25 @@ async function runSteps(stepsToRun: typeof STEPS, onStep?: PipelineOptions["onSt
 }
 
 export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResult[]> {
-  const { fromStep = 0, toStep = 7, onlyStep, onStep } = opts;
+  const { fromStep = 0, toStep = 7, onlyStep, maxIterations = 50, onStep } = opts;
+
+  // Evitar runs simultáneos (cron + manual al mismo tiempo)
+  if (_running) {
+    const blocked: StepResult = {
+      step: -1, name: "pipeline",
+      procesados: 0, errores: 0, saltados: 0,
+      detalles: ["Pipeline ya está en ejecución — intento ignorado"],
+      duracionMs: 0,
+    };
+    onStep?.(blocked);
+    return [blocked];
+  }
+
+  _running = true;
+  _stopRequested = false;
+
+  // Ensure DB schema exists (handles empty/new DB)
+  try { migrate(); } catch { /* ignore */ }
 
   // Backup DB before running
   try { backupDb(); } catch { /* ignore */ }
@@ -82,8 +108,10 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
     }
 
   // Flujo completo (fromStep=0): loop unitario — 1 correo a la vez hasta vaciar bandeja
+  // Steps 1-5 corren por cada correo; steps 6-7 (notify+archive) corren UNA VEZ al final
   const allResults: StepResult[] = [];
-  const processingSteps = STEPS.filter(s => s.n >= 1 && s.n <= toStep);
+  const uploadSteps = STEPS.filter(s => s.n >= 1 && s.n <= Math.min(toStep, 5));
+  const finalSteps  = STEPS.filter(s => s.n >= 6 && s.n <= toStep);
   let iteration = 0;
 
     while (true) {
@@ -113,17 +141,49 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
       allResults.push(downloadResult);
       onStep?.(downloadResult);
 
-      // Si no hubo correos nuevos, terminar
+      // Siempre correr steps 1-5: procesan tanto el correo recién descargado
+      // como cualquier correo en disco pendiente de iteraciones anteriores.
+      const stepResults = await runSteps(uploadSteps, onStep);
+      allResults.push(...stepResults);
+
+      // Terminar loop si no hubo correos nuevos (bandeja vacía o error IMAP)
       if (downloadResult.procesados === 0) break;
 
-      // Pasos 1-7 para el correo recién descargado
-      const stepResults = await runSteps(processingSteps, onStep);
-      allResults.push(...stepResults);
+      // Pausa solicitada por el usuario
+      if (_stopRequested) {
+        allResults.push({
+          step: 0, name: "download",
+          procesados: 0, errores: 0, saltados: 0,
+          detalles: ["⏹ Pipeline detenido por el usuario"],
+          duracionMs: 0,
+        });
+        break;
+      }
+
+      // Límite de seguridad: máximo N correos por run
+      if (iteration >= maxIterations) {
+        allResults.push({
+          step: 0, name: "download",
+          procesados: 0, errores: 0, saltados: 0,
+          detalles: [`⚠ Límite de ${maxIterations} correos por run alcanzado — deteniendo`],
+          duracionMs: 0,
+        });
+        break;
+      }
     }
+
+    // Pasos 6-7: notificar y archivar UNA SOLA VEZ al final (1 email por lote)
+    if (finalSteps.length > 0) {
+      await logoutSapClient();
+      const finalResults = await runSteps(finalSteps, onStep);
+      allResults.push(...finalResults);
+    }
+
     return allResults;
 
   } finally {
-    // Clean up SAP session regardless of success or failure
+    _running = false;
+    _stopRequested = false;
     await logoutSapClient();
   }
 }

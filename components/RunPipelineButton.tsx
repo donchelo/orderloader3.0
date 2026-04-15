@@ -29,6 +29,7 @@ interface Props {
 
 export default function RunPipelineButton({ onComplete }: Props) {
   const [running, setRunning] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [results, setResults] = useState<StepResult[]>([]);
   const [currentStep, setCurrentStep] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -49,6 +50,13 @@ export default function RunPipelineButton({ onComplete }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
+
+      if (res.status === 409) {
+        setError("El pipeline ya está en ejecución. Espera a que termine.");
+        setRunning(false);
+        setCurrentStep(null);
+        return;
+      }
 
       if (!res.body) throw new Error("Sin stream");
 
@@ -90,6 +98,15 @@ export default function RunPipelineButton({ onComplete }: Props) {
     }
   }
 
+  async function handleStop() {
+    setStopping(true);
+    try {
+      await fetch("/api/pipeline/stop", { method: "POST" });
+    } finally {
+      setStopping(false);
+    }
+  }
+
   function toggleExpand(step: number) {
     setExpandedSteps(prev => {
       const next = new Set(prev);
@@ -100,22 +117,43 @@ export default function RunPipelineButton({ onComplete }: Props) {
 
   return (
     <div>
-      <button
-        onClick={handleRun}
-        disabled={running}
-        style={{
-          background: running ? "#e9ecef" : "#f8f9fa",
-          color: "#000",
-          border: "1px solid #000",
-          borderRadius: "6px",
-          padding: "10px 24px",
-          fontSize: "14px",
-          fontWeight: 600,
-          cursor: running ? "not-allowed" : "pointer",
-        }}
-      >
-        {running ? "⏳ Ejecutando…" : "▶ Correr Pipeline"}
-      </button>
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button
+          onClick={handleRun}
+          disabled={running}
+          style={{
+            background: running ? "#e9ecef" : "#f8f9fa",
+            color: "#000",
+            border: "1px solid #000",
+            borderRadius: "6px",
+            padding: "10px 24px",
+            fontSize: "14px",
+            fontWeight: 600,
+            cursor: running ? "not-allowed" : "pointer",
+          }}
+        >
+          {running ? "⏳ Ejecutando…" : "▶ Correr Pipeline"}
+        </button>
+
+        {running && (
+          <button
+            onClick={handleStop}
+            disabled={stopping}
+            style={{
+              background: stopping ? "#e9ecef" : "#fff3cd",
+              color: "#000",
+              border: "1px solid #856404",
+              borderRadius: "6px",
+              padding: "10px 20px",
+              fontSize: "14px",
+              fontWeight: 600,
+              cursor: stopping ? "not-allowed" : "pointer",
+            }}
+          >
+            {stopping ? "Deteniendo…" : "⏹ Pausar"}
+          </button>
+        )}
+      </div>
 
       {error && (
         <div style={{ marginTop: 12, background: "#f8d7da", color: "#000", padding: "10px 14px", borderRadius: 6 }}>
@@ -126,7 +164,7 @@ export default function RunPipelineButton({ onComplete }: Props) {
       {(results.length > 0 || running) && (
         <div style={{ marginTop: 16, border: "1px solid #dee2e6", borderRadius: 8, overflow: "hidden" }}>
           <div style={{ background: "#f8fafc", padding: "10px 16px", borderBottom: "1px solid #dee2e6", fontSize: 13, fontWeight: 600 }}>
-            {done ? "✅ Pipeline completado" : `⏳ Ejecutando pipeline…`}
+            {done ? "✅ Pipeline completado" : stopping ? "⏹ Deteniendo tras correo actual…" : "⏳ Ejecutando pipeline…"}
           </div>
 
           {/* Steps completados */}

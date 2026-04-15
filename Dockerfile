@@ -35,27 +35,18 @@ ENV HOSTNAME="0.0.0.0"
 # Instalar posibles dependencias de runtime nativas requeridas
 RUN apk add --no-cache libc6-compat
 
-# Configurar un usuario normal (no-root) para mejorar seguridad
-# UID y GID deben ser explícitos
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
-
 # Copiar carpeta public (Next.js requiere esto)
 COPY --from=builder /app/public ./public
 
-# Crear y asignar permisos de la carpeta de cache de renderizado optimizado
-RUN mkdir .next && chown nextjs:nodejs .next
+# Crear directorio .next
+RUN mkdir -p .next .data
 
-# Las apps 'standalone' agrupan los node_modules necesarios. 
-# Copiar el runtime standalone auto-generado
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-# También hay que copiar los assets estáticos generados por webpack
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-
-# Cambiar a usuario sin permisos root por seguridad
-USER nextjs
+# Las apps 'standalone' agrupan los node_modules necesarios.
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
 EXPOSE 3000
 
+# Correr como root para poder escribir en el volumen .data montado desde el host
 # server.js es generado por standalone
 CMD ["node", "server.js"]

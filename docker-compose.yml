@@ -12,6 +12,9 @@ services:
       - DATA_DIR=/app/.data
     env_file:
       - .env
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     volumes:
       # Volumen mapeado: [Ruta_Segura_Local]:[Ruta_Contenedor]
       # Todos los datos de SQLite y pedidos vivirán localmente en la carpeta './data' al lado del docker-compose.yml

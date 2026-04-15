@@ -10,6 +10,7 @@
  */
 
 import { ImapFlow } from "imapflow";
+import { simpleParser } from "mailparser";
 import fs from "fs";
 import path from "path";
 import { getConfig } from "../config";
@@ -87,10 +88,18 @@ export async function run(): Promise<StepResult> {
         return result;
       }
 
-      result.detalles.push(`Encontrados ${messages.length} correo(s) no leído(s) — procesando 1`);
+      // Filtrar correos no marcados como Seen (evita reprocesar si step7 falla el IMAP move)
+      const noVistos = messages.filter(msg => !msg.flags?.has("\\Seen"));
+
+      if (noVistos.length === 0) {
+        result.detalles.push("No hay correos nuevos en A A INGRESAR IA");
+        return result;
+      }
+
+      result.detalles.push(`Encontrados ${noVistos.length} correo(s) sin procesar — procesando 1`);
 
       // Flujo unitario: procesar solo el primer correo; el pipeline llama step0 en loop
-      for (const msg of messages.slice(0, 1)) {
+      for (const msg of noVistos.slice(0, 1)) {
         try {
           const envelope = msg.envelope;
           const subject = envelope?.subject ?? "Sin asunto";
@@ -122,57 +131,31 @@ export async function run(): Promise<StepResult> {
             fs.writeFileSync(path.join(pedidoPath, "correo_original.eml"), msg.source);
           }
 
-          // Parse EML to extract body and attachments
+          // Parse EML with mailparser (handles nested forwards, Apple Mail, etc.)
           let bodyText = `De: ${sender}\nAsunto: ${subject}\nFecha: ${dateHeader}\n\n`;
           let pdfCount = 0;
 
           if (msg.source) {
-            // Use simple boundary parsing to extract attachments
-            const raw = msg.source.toString("utf8");
+            const parsed = await simpleParser(msg.source);
 
-            // Extract text/plain body
-            const plainMatch = raw.match(/Content-Type: text\/plain[^\r\n]*\r?\n(?:[^\r\n]+:\s*[^\r\n]*\r?\n)*\r?\n([\s\S]*?)(?=\r?\n--|\r?\n\r?\n--)/i);
-            if (plainMatch) {
-              bodyText += plainMatch[1];
-            }
-
+            // Extract text body
+            if (parsed.text) bodyText += parsed.text;
             fs.writeFileSync(path.join(pedidoPath, "correo_original.txt"), bodyText, "utf8");
 
-            // Extract attachments using boundary
-            const boundaryMatch = raw.match(/boundary="?([^"\r\n;]+)"?/i);
-            if (boundaryMatch) {
-              const boundary = "--" + boundaryMatch[1];
-              const parts = raw.split(boundary);
-              for (const part of parts) {
-                const filenameMatch = part.match(/filename[*]?=(?:UTF-8''|"?)([^"\r\n;]+)"?/i);
-                if (filenameMatch) {
-                  const filename = decodeURIComponent(filenameMatch[1].trim());
-                  const safeName = clean(filename) || "adjunto";
-                  // Find content after headers
-                  const contentStart = part.indexOf("\r\n\r\n");
-                  if (contentStart !== -1) {
-                    const encodingMatch = part.match(/Content-Transfer-Encoding:\s*(\S+)/i);
-                    const encoding = encodingMatch?.[1]?.toLowerCase() ?? "7bit";
-                    let content = part.slice(contentStart + 4).replace(/--$/, "").trim();
-                    let buf: Buffer;
-                    if (encoding === "base64") {
-                      buf = Buffer.from(content.replace(/\s+/g, ""), "base64");
-                    } else {
-                      buf = Buffer.from(content, "binary");
-                    }
-                    fs.writeFileSync(path.join(pedidoPath, safeName), buf);
-                    if (safeName.toLowerCase().endsWith(".pdf")) pdfCount++;
-                  }
-                }
-              }
+            // Extract all attachments (including those inside forwarded message/rfc822)
+            for (const att of parsed.attachments) {
+              if (!att.filename) continue;
+              const safeName = clean(att.filename) || "adjunto";
+              fs.writeFileSync(path.join(pedidoPath, safeName), att.content);
+              if (safeName.toLowerCase().endsWith(".pdf")) pdfCount++;
             }
           } else {
             fs.writeFileSync(path.join(pedidoPath, "correo_original.txt"), bodyText, "utf8");
           }
 
-          const destFolder = `Pedidos/Ingresados/${client_folder}`;
+          const STAGING_FOLDER = "A A EN PROCESO IA";
 
-          // Write metadata — incluye UID para que step7 pueda archivar el correo
+          // Write metadata — incluye UID y carpeta staging para que step7 pueda archivar
           const metadata = {
             from: sender,
             subject,
@@ -180,6 +163,7 @@ export async function run(): Promise<StepResult> {
             client: client_folder,
             folder_local: `pedidos/raw/${client_folder}/${folderName}`,
             imap_uid: msg.uid,
+            imap_staging_folder: STAGING_FOLDER,
             n_adjuntos_pdf: pdfCount,
             ts_download: new Date().toISOString(),
           };
@@ -194,6 +178,15 @@ export async function run(): Promise<StepResult> {
             JSON.stringify({ fase: 0, estado: "DESCARGADO", ts: new Date().toISOString() }, null, 2),
             "utf8"
           );
+
+          // Mover a "A A EN PROCESO IA" inmediatamente — esto es lo que evita el loop
+          // Si el email no está en INGRESAR IA, no puede descargarse de nuevo
+          try {
+            await client.messageMove(String(msg.uid), STAGING_FOLDER, { uid: true });
+          } catch {
+            // Fallback: al menos marcar como Seen
+            try { await client.messageFlagsAdd(String(msg.uid), ["\\Seen"], { uid: true }); } catch { /* ignorar */ }
+          }
 
           // Log to DB
           try {
