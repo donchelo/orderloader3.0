@@ -43,3 +43,39 @@ DB migrada correctamente: /home/ai_tamaprint/Software/orderloader/.data/orderloa
 ✅ Step 6 (notify): 0 processed, 0 errors, 0 skipped (2ms)
 ✅ Step 7 (archive): 0 processed, 0 errors, 0 skipped (0ms)
 Summary: Total Processed: 0, Total Errors: 0
+[2026-04-15T20:00:02.606Z] Starting scheduled pipeline run...
+DB migrada correctamente: /home/ai_tamaprint/Software/orderloader/.data/orderloader.db
+[2026-04-15T20:00:02.671Z] Pipeline finished.
+✅ Step 0 (download): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 1 (parse): 0 processed, 0 errors, 109 skipped (11ms)
+✅ Step 2 (validate-parse): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 3 (sap-query): 0 processed, 0 errors, 0 skipped (0ms)
+✅ Step 4 (upload): 0 processed, 0 errors, 0 skipped (0ms)
+✅ Step 5 (reconcile): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 6 (notify): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 7 (archive): 0 processed, 0 errors, 27 skipped (6ms)
+Summary: Total Processed: 0, Total Errors: 0
+[2026-04-15T21:00:02.975Z] Starting scheduled pipeline run...
+DB migrada correctamente: /home/ai_tamaprint/Software/orderloader/.data/orderloader.db
+[2026-04-15T21:00:03.000Z] Pipeline finished.
+✅ Step 0 (download): 0 processed, 0 errors, 0 skipped (0ms)
+✅ Step 1 (parse): 0 processed, 0 errors, 109 skipped (8ms)
+✅ Step 2 (validate-parse): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 3 (sap-query): 0 processed, 0 errors, 0 skipped (0ms)
+✅ Step 4 (upload): 0 processed, 0 errors, 0 skipped (0ms)
+✅ Step 5 (reconcile): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 6 (notify): 0 processed, 0 errors, 0 skipped (0ms)
+✅ Step 7 (archive): 0 processed, 0 errors, 27 skipped (6ms)
+Summary: Total Processed: 0, Total Errors: 0
+[2026-04-15T22:00:02.249Z] Starting scheduled pipeline run...
+DB migrada correctamente: /home/ai_tamaprint/Software/orderloader/.data/orderloader.db
+[2026-04-15T22:00:02.278Z] Pipeline finished.
+✅ Step 0 (download): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 1 (parse): 0 processed, 0 errors, 109 skipped (8ms)
+✅ Step 2 (validate-parse): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 3 (sap-query): 0 processed, 0 errors, 0 skipped (0ms)
+✅ Step 4 (upload): 0 processed, 0 errors, 0 skipped (0ms)
+✅ Step 5 (reconcile): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 6 (notify): 0 processed, 0 errors, 0 skipped (0ms)
+✅ Step 7 (archive): 0 processed, 0 errors, 27 skipped (6ms)
+Summary: Total Processed: 0, Total Errors: 0
