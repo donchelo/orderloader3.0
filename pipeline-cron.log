@@ -348,3 +348,15 @@ DB migrada correctamente: /home/ai_tamaprint/Software/orderloader/.data/orderloa
 ✅ Step 6 (notify): 0 processed, 0 errors, 0 skipped (1ms)
 ✅ Step 7 (archive): 0 processed, 0 errors, 29 skipped (52ms)
 Summary: Total Processed: 0, Total Errors: 0
+[2026-04-17T23:00:06.547Z] Starting scheduled pipeline run...
+DB migrada correctamente: /home/ai_tamaprint/Software/orderloader/.data/orderloader.db
+[2026-04-17T23:00:06.841Z] Pipeline finished.
+✅ Step 0 (download): 0 processed, 0 errors, 0 skipped (2ms)
+✅ Step 1 (parse): 0 processed, 0 errors, 117 skipped (101ms)
+✅ Step 2 (validate-parse): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 3 (sap-query): 0 processed, 0 errors, 0 skipped (0ms)
+✅ Step 4 (upload): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 5 (reconcile): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 6 (notify): 0 processed, 0 errors, 0 skipped (3ms)
+✅ Step 7 (archive): 0 processed, 0 errors, 34 skipped (79ms)
+Summary: Total Processed: 0, Total Errors: 0

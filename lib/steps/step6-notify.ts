@@ -290,22 +290,28 @@ function buildCostHtml(db: any, rows: Array<Record<string, unknown>>): string {
   </div>`;
 }
 
-function buildHtml(db: any, rows: Array<Record<string, unknown>>, fecha: string): string {
-  const filas = rows.map(row => {
-    const estado = String(row.estado);
-    const esParcial = (estado === "SAP_MONTADO" || estado === "VALIDADO") && parseExcluidos(row).length > 0;
-    const color = esParcial ? "#fff3cd" : (ESTADO_COLOR[estado] ?? "#ffffff");
-    const estadoLabel = esParcial ? `${estado} ⚠ PARCIAL` : estado;
-    return `<tr style="background:${color}">
-      <td style="padding:6px 12px">${row.orden_compra}</td>
-      <td style="padding:6px 12px">${row.cliente_nombre}</td>
-      <td style="padding:6px 12px"><b>${estadoLabel}</b></td>
-      <td style="padding:6px 12px">${buildDetalle(row)}</td>
-    </tr>`;
-  }).join("");
+function buildSubjectForOrder(row: Record<string, unknown>): string {
+  const estado = String(row.estado);
+  const esParcial = (estado === "SAP_MONTADO" || estado === "VALIDADO") && parseExcluidos(row).length > 0;
+  const estadoLabel = esParcial ? `${estado} ⚠ PARCIAL` : estado;
+  return `[OrderLoader] OC ${row.orden_compra} | ${row.cliente_nombre || "—"} | ${estadoLabel}`;
+}
+
+function buildHtmlForOrder(db: any, row: Record<string, unknown>, fecha: string): string {
+  const estado = String(row.estado);
+  const esParcial = (estado === "SAP_MONTADO" || estado === "VALIDADO") && parseExcluidos(row).length > 0;
+  const color = esParcial ? "#fff3cd" : (ESTADO_COLOR[estado] ?? "#ffffff");
+  const estadoLabel = esParcial ? `${estado} ⚠ PARCIAL` : estado;
+
+  const fila = `<tr style="background:${color}">
+    <td style="padding:6px 12px">${row.orden_compra}</td>
+    <td style="padding:6px 12px">${row.cliente_nombre}</td>
+    <td style="padding:6px 12px"><b>${estadoLabel}</b></td>
+    <td style="padding:6px 12px">${buildDetalle(row)}</td>
+  </tr>`;
 
   return `<html><body style="font-family:Arial,sans-serif;font-size:13px">
-  <h2 style="margin-bottom:4px">Resumen OrderLoader — ${fecha}</h2>
+  <h2 style="margin-bottom:4px">OrderLoader — OC ${row.orden_compra} — ${fecha}</h2>
   <table border="1" cellspacing="0" style="border-collapse:collapse;width:100%;margin-top:12px">
     <thead style="background:#343a40;color:#fff">
       <tr>
@@ -315,12 +321,12 @@ function buildHtml(db: any, rows: Array<Record<string, unknown>>, fecha: string)
         <th style="padding:8px;text-align:left">Detalle</th>
       </tr>
     </thead>
-    <tbody>${filas}</tbody>
+    <tbody>${fila}</tbody>
   </table>
-  ${buildPreciosHtml(db, rows)}
-  ${buildExcluidosHtml(rows)}
-  ${buildDiscrepanciasHtml(rows)}
-  ${buildCostHtml(db, rows)}
+  ${buildPreciosHtml(db, [row])}
+  ${buildExcluidosHtml([row])}
+  ${buildDiscrepanciasHtml([row])}
+  ${buildCostHtml(db, [row])}
   <p style="color:#888;font-size:11px;margin-top:16px">
     Generado automáticamente por OrderLoader Pipeline · ${fecha}
   </p>
@@ -353,24 +359,6 @@ export async function run(): Promise<StepResult> {
   }
 
   const fecha = new Date().toISOString().split("T")[0];
-  const nOk = rows.filter(r =>
-    (r.estado === "VALIDADO" || r.estado === "SAP_MONTADO") && !parseExcluidos(r).length
-  ).length;
-  const nParcial = rows.filter(r =>
-    (r.estado === "VALIDADO" || r.estado === "SAP_MONTADO") && parseExcluidos(r).length > 0
-  ).length;
-  const nErr = rows.filter(r => String(r.estado).startsWith("ERROR_")).length;
-
-  const ocs = [...new Set(rows.map(r => String(r.orden_compra)))];
-  const clientes = [...new Set(rows.map(r => String(r.cliente_nombre || "")).filter(Boolean))];
-  const ocPart = ocs.length === 1 ? `OC ${ocs[0]}` : `${ocs.length} OC(s): ${ocs.join(", ")}`;
-  const clientePart = clientes.length <= 2 ? clientes.join(" / ") : `${clientes.length} clientes`;
-  const estadoPart = nErr > 0
-    ? `${nErr} error(es)${nOk + nParcial > 0 ? ` · ${nOk + nParcial} OK` : ""}`
-    : `${nOk} OK${nParcial > 0 ? ` · ${nParcial} parcial(es)` : ""}`;
-  const subject = `[OrderLoader] ${ocPart} | ${clientePart} | ${estadoPart}`;
-  const html = buildHtml(db, rows, fecha);
-
   const transporter = nodemailer.createTransport({
     host: config.smtpHost,
     port: config.smtpPort,
@@ -378,34 +366,30 @@ export async function run(): Promise<StepResult> {
     auth: { user: config.emailUser, pass: config.emailPass },
   });
 
-  try {
-    await transporter.sendMail({
-      from: config.emailUser,
-      to: config.notifyEmail,
-      cc: "pedidos@tamaprint.com",
-      subject,
-      html,
-    });
+  const now = new Date().toISOString();
 
-    const now = new Date().toISOString();
-    const tx = db.transaction(() => {
-      for (const row of rows) {
-        db.prepare(`
-          UPDATE pedidos_maestro SET estado='NOTIFICADO', ts_notified=?, fase_actual=6
-          WHERE orden_compra=?
-        `).run(now, row.orden_compra);
-        logPipeline(db, String(row.orden_compra), 6, "notify", "OK", `Email → ${config.notifyEmail}`);
-      }
-    });
-    tx();
+  for (const row of rows) {
+    const oc = String(row.orden_compra);
+    try {
+      await transporter.sendMail({
+        from: config.emailUser,
+        to: config.notifyEmail,
+        cc: "pedidos@tamaprint.com",
+        subject: buildSubjectForOrder(row),
+        html: buildHtmlForOrder(db, row, fecha),
+      });
 
-    result.procesados = rows.length;
-    result.detalles.push(`✓ Email enviado a ${config.notifyEmail}: ${rows.length} pedido(s) → NOTIFICADO`);
-  } catch (e) {
-    result.errores = rows.length;
-    result.detalles.push(`✗ Error enviando email: ${String(e)}`);
-    for (const row of rows) {
-      logPipeline(db, String(row.orden_compra), 6, "notify", "ERROR", String(e).slice(0, 120));
+      db.prepare(`
+        UPDATE pedidos_maestro SET estado='NOTIFICADO', ts_notified=?, fase_actual=6
+        WHERE orden_compra=?
+      `).run(now, oc);
+      logPipeline(db, oc, 6, "notify", "OK", `Email → ${config.notifyEmail}`);
+      result.procesados++;
+      result.detalles.push(`✓ OC ${oc} → NOTIFICADO`);
+    } catch (e) {
+      logPipeline(db, oc, 6, "notify", "ERROR", String(e).slice(0, 120));
+      result.errores++;
+      result.detalles.push(`✗ OC ${oc}: ${String(e).slice(0, 80)}`);
     }
   }
 
