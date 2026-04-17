@@ -149,6 +149,78 @@ function buildDiscrepanciasHtml(rows: Array<Record<string, unknown>>): string {
   return `<h3 style="margin-top:24px;margin-bottom:8px">Detalle de discrepancias</h3>${secciones}`;
 }
 
+function buildPreciosHtml(db: any, rows: Array<Record<string, unknown>>): string {
+  const relevantes = rows.filter(r =>
+    r.estado === "VALIDADO" || r.estado === "SAP_MONTADO" || r.estado === "ERROR_VALIDACION"
+  );
+  if (!relevantes.length) return "";
+
+  const fmtCOP = (v: number) =>
+    v > 0
+      ? v.toLocaleString("es-CO", { style: "currency", currency: "COP", maximumFractionDigits: 0 })
+      : `<span style="color:#dc3545;font-weight:bold">$0 ⚠</span>`;
+
+  const secciones = relevantes.map(row => {
+    const lineas = db.prepare(
+      "SELECT codigo_producto, cantidad, precio_unitario, subtotal_item FROM pedidos_detalle WHERE orden_compra = ? ORDER BY id"
+    ).all(row.orden_compra) as Array<{ codigo_producto: string; cantidad: number; precio_unitario: number; subtotal_item: number }>;
+
+    if (!lineas.length) return "";
+
+    // Índice de precios con error por SupplierCatNum
+    const preciosMalos = new Map<string, number>();
+    try {
+      const v = JSON.parse(String(row.validacion_resultado ?? "{}")) as { diferencias?: Array<{ campo: string; sap: number }> };
+      for (const d of v.diferencias ?? []) {
+        const m = d.campo.match(/^Precio \[(.+)\]$/);
+        if (m) preciosMalos.set(m[1], Number(d.sap));
+      }
+    } catch { /* ignore */ }
+
+    const filas = lineas.map(l => {
+      const tieneMalo = preciosMalos.has(l.codigo_producto);
+      const sapPrice = preciosMalos.get(l.codigo_producto) ?? l.precio_unitario;
+      const bg = tieneMalo ? "#fff3cd" : "#f6fff6";
+      const icono = tieneMalo ? "⚠" : "✓";
+      const colorIcono = tieneMalo ? "#856404" : "#198754";
+
+      return `<tr style="background:${bg}">
+        <td style="padding:5px 10px;font-family:monospace;font-size:11px">${l.codigo_producto}</td>
+        <td style="padding:5px 10px;text-align:right">${l.cantidad}</td>
+        <td style="padding:5px 10px;text-align:right">${fmtCOP(l.precio_unitario)}</td>
+        <td style="padding:5px 10px;text-align:right">${tieneMalo ? fmtCOP(sapPrice) : "—"}</td>
+        <td style="padding:5px 10px;text-align:right">${fmtCOP(l.subtotal_item)}</td>
+        <td style="padding:5px 10px;text-align:center;color:${colorIcono};font-weight:bold">${icono}</td>
+      </tr>`;
+    }).join("");
+
+    const tituloColor = preciosMalos.size > 0 ? "#856404" : "#155724";
+    const tituloBg    = preciosMalos.size > 0 ? "#fff3cd" : "#d4edda";
+
+    return `
+    <div style="margin:16px 0;border:1px solid #dee2e6;border-radius:4px;overflow:hidden">
+      <div style="background:${tituloBg};color:${tituloColor};padding:6px 12px;font-weight:bold">
+        OC ${row.orden_compra} — ${row.cliente_nombre}${row.sap_doc_num ? ` (DocNum SAP: ${row.sap_doc_num})` : ""}
+      </div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead style="background:#343a40;color:#fff">
+          <tr>
+            <th style="padding:6px 10px;text-align:left">Artículo</th>
+            <th style="padding:6px 10px;text-align:right">Cant.</th>
+            <th style="padding:6px 10px;text-align:right">Precio Unit. PDF</th>
+            <th style="padding:6px 10px;text-align:right">Precio Unit. SAP</th>
+            <th style="padding:6px 10px;text-align:right">Subtotal PDF</th>
+            <th style="padding:6px 10px;text-align:center">OK</th>
+          </tr>
+        </thead>
+        <tbody>${filas}</tbody>
+      </table>
+    </div>`;
+  }).join("");
+
+  return `<h3 style="margin-top:24px;margin-bottom:8px">Detalle de precios por línea</h3>${secciones}`;
+}
+
 function buildExcluidosHtml(rows: Array<Record<string, unknown>>): string {
   const parciales = rows.filter(r =>
     (r.estado === "SAP_MONTADO" || r.estado === "VALIDADO") && parseExcluidos(r).length > 0
@@ -245,6 +317,7 @@ function buildHtml(db: any, rows: Array<Record<string, unknown>>, fecha: string)
     </thead>
     <tbody>${filas}</tbody>
   </table>
+  ${buildPreciosHtml(db, rows)}
   ${buildExcluidosHtml(rows)}
   ${buildDiscrepanciasHtml(rows)}
   ${buildCostHtml(db, rows)}

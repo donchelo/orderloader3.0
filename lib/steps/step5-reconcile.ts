@@ -93,7 +93,7 @@ export async function run(): Promise<StepResult> {
     try {
       const sapOrder = await sap.get<Record<string, unknown>>(
         `Orders(${docEntry})`,
-        { "$select": "DocEntry,DocNum,NumAtCard,CardCode,DocDate,DocDueDate,TaxDate,DocumentLines" }
+        { "$select": "DocEntry,DocNum,NumAtCard,CardCode,DocDate,DocDueDate,TaxDate,DocTotal,DocumentLines" }
       );
       const sapLines = (sapOrder.DocumentLines as Array<Record<string, unknown>>) ?? [];
 
