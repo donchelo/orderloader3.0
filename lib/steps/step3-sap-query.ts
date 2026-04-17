@@ -4,9 +4,12 @@
  * PARSE_VALIDO → SAP_NUEVO | ERROR_DUPLICADO
  */
 
+import fs from "fs";
+import path from "path";
 import { getDb, logPipeline } from "../db";
 import { sendAlertEmail } from "../mailer";
 import { getSapClient, clearSapClient } from "../sap-client";
+import type { SapB1Order } from "./step1-parse";
 
 export interface StepResult {
   procesados: number;
@@ -44,16 +47,30 @@ export async function run(): Promise<StepResult> {
     const now = new Date().toISOString();
     const fecha = new Date().toISOString().split("T")[0];
 
+    // Leer CardCode desde data_extraida.json para filtrar por clave real (CardCode + NumAtCard)
+    const carpeta = row.carpeta_origen as string | null;
+    const markerPath = carpeta ? path.join(carpeta, "data_extraida.json") : null;
+    if (!markerPath || !fs.existsSync(markerPath)) {
+      db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_SAP', error_msg=? WHERE orden_compra=?`)
+        .run("data_extraida.json no encontrado en step3", oc);
+      logPipeline(db, oc, 3, "sap_query", "ERROR", "data_extraida.json no encontrado");
+      result.errores++;
+      result.detalles.push(`✗ OC ${oc}: data_extraida.json no encontrado`);
+      continue;
+    }
+    const aiData = JSON.parse(fs.readFileSync(markerPath, "utf8")) as SapB1Order;
+    const cardCode = aiData.CardCode;
+
     try {
       const res = await sap.get<{ value: Array<Record<string, unknown>> }>(
         "Orders",
-        { "$filter": `NumAtCard eq '${oc}'`, "$select": "DocEntry,DocNum,DocTotal,CardCode" }
+        { "$filter": `NumAtCard eq '${oc}' and CardCode eq '${cardCode}'`, "$select": "DocEntry,DocNum,DocTotal,CardCode" }
       );
       const valor = res.value ?? [];
 
       if (valor.length) {
         const doc = valor[0];
-        const errorMsg = `OC duplicada en SAP: DocEntry=${doc.DocEntry}, DocNum=${doc.DocNum}`;
+        const errorMsg = `OC duplicada en SAP para ${cardCode}: DocEntry=${doc.DocEntry}, DocNum=${doc.DocNum}`;
         db.prepare(`
           UPDATE pedidos_maestro SET
             estado='ERROR_DUPLICADO', sap_existe=1, sap_doc_entry=?, sap_doc_num=?,

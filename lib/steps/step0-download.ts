@@ -88,18 +88,10 @@ export async function run(): Promise<StepResult> {
         return result;
       }
 
-      // Filtrar correos no marcados como Seen (evita reprocesar si step7 falla el IMAP move)
-      const noVistos = messages.filter(msg => !msg.flags?.has("\\Seen"));
-
-      if (noVistos.length === 0) {
-        result.detalles.push("No hay correos nuevos en A A INGRESAR IA");
-        return result;
-      }
-
-      result.detalles.push(`Encontrados ${noVistos.length} correo(s) sin procesar — procesando 1`);
+      result.detalles.push(`Encontrados ${messages.length} correo(s) en A A INGRESAR IA — procesando 1`);
 
       // Flujo unitario: procesar solo el primer correo; el pipeline llama step0 en loop
-      for (const msg of noVistos.slice(0, 1)) {
+      for (const msg of messages.slice(0, 1)) {
         try {
           const envelope = msg.envelope;
           const subject = envelope?.subject ?? "Sin asunto";
@@ -155,14 +147,25 @@ export async function run(): Promise<StepResult> {
 
           const STAGING_FOLDER = "INBOX.A A INGRESADO";
 
-          // Write metadata — incluye UID y carpeta staging para que step7 pueda archivar
+          // Mover inmediatamente — esto evita el reloop. Capturar el nuevo UID via uidMap
+          // (IMAP asigna un UID distinto en la carpeta destino; guardamos el nuevo para step7)
+          let storedUid = msg.uid;
+          try {
+            const moveResult = await client.messageMove(String(msg.uid), STAGING_FOLDER, { uid: true });
+            const newUid = (moveResult as { uidMap?: Map<number, number> })?.uidMap?.get(msg.uid);
+            if (newUid) storedUid = newUid;
+          } catch {
+            try { await client.messageFlagsAdd(String(msg.uid), ["\\Seen"], { uid: true }); } catch { /* ignorar */ }
+          }
+
+          // Write metadata — usa el UID válido en staging para que step7 pueda moverlo
           const metadata = {
             from: sender,
             subject,
             date: dateHeader,
             client: client_folder,
             folder_local: `pedidos/raw/${client_folder}/${folderName}`,
-            imap_uid: msg.uid,
+            imap_uid: storedUid,
             imap_staging_folder: STAGING_FOLDER,
             n_adjuntos_pdf: pdfCount,
             ts_download: new Date().toISOString(),
@@ -179,20 +182,11 @@ export async function run(): Promise<StepResult> {
             "utf8"
           );
 
-          // Mover a "A A EN PROCESO IA" inmediatamente — esto es lo que evita el loop
-          // Si el email no está en INGRESAR IA, no puede descargarse de nuevo
-          try {
-            await client.messageMove(String(msg.uid), STAGING_FOLDER, { uid: true });
-          } catch {
-            // Fallback: al menos marcar como Seen
-            try { await client.messageFlagsAdd(String(msg.uid), ["\\Seen"], { uid: true }); } catch { /* ignorar */ }
-          }
-
           // Log to DB
           try {
             const db = getDb();
             logPipeline(db, folderName, 0, "download", "OK",
-              `UID=${msg.uid} cliente=${client_folder} PDFs=${pdfCount}`);
+              `UID=${storedUid} cliente=${client_folder} PDFs=${pdfCount}`);
           } catch {
             /* DB might not exist yet */
           }
