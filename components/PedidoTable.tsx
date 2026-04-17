@@ -16,6 +16,7 @@ export interface Pedido {
   error_msg: string | null;
   sap_doc_num: string | null;
   ts_sap_upload: string | null;
+  validacion_resultado: string | null;
 }
 
 interface Props {
@@ -35,20 +36,45 @@ function formatDate(d: string | null): string {
   return d.split("T")[0];
 }
 
-function ErrorCell({ msg }: { msg: string | null }) {
+interface Diferencia { campo: string; pdf: string | number; sap: string | number; }
+
+function NotaCell({ msg, validacion }: { msg: string | null; validacion: string | null }) {
   const [expanded, setExpanded] = useState(false);
-  if (!msg) return null;
-  const short = msg.length > 60;
+
+  const diferencias: Diferencia[] = (() => {
+    if (!validacion) return [];
+    try {
+      const v = JSON.parse(validacion) as { ok: boolean; diferencias: Diferencia[] };
+      return v.diferencias ?? [];
+    } catch { return []; }
+  })();
+
+  const hasDifs = diferencias.length > 0;
+
+  if (!msg && !hasDifs) return null;
+
   return (
     <span>
-      {expanded || !short ? msg : msg.slice(0, 60) + "…"}
-      {short && (
-        <button
-          onClick={() => setExpanded(v => !v)}
-          style={{ marginLeft: 6, background: "none", border: "none", color: "#000", textDecoration: "underline", cursor: "pointer", fontSize: 11, padding: 0 }}
-        >
-          {expanded ? "menos" : "más"}
-        </button>
+      {msg && <span>{msg} </span>}
+      {hasDifs && (
+        <>
+          <span style={{ color: "#dc2626", fontWeight: 600 }}>
+            {diferencias.length} diferencia(s):{" "}
+            {expanded
+              ? diferencias.map((d, i) => (
+                  <span key={i} style={{ display: "block", fontWeight: 400, fontSize: 11 }}>
+                    {d.campo}: PDF={d.pdf} / SAP={d.sap}
+                  </span>
+                ))
+              : diferencias.map(d => d.campo).join(", ")}
+          </span>
+          <button
+            onClick={() => setExpanded(v => !v)}
+            style={{ marginLeft: 6, background: "none", border: "none", color: "#000", textDecoration: "underline", cursor: "pointer", fontSize: 11, padding: 0 }}
+          >
+            {expanded ? "menos" : "más"}
+          </button>
+        </>
       )}
     </span>
   );
@@ -267,7 +293,7 @@ export default function PedidoTable({ pedidos, filtroEstado, onFiltroChange, onS
                   </td>
                   <td style={{ padding: "10px 16px", color: "#000", fontSize: 12 }}>{p.sap_doc_num ?? "—"}</td>
                   <td style={{ padding: "10px 16px", color: "#000", fontSize: 12, maxWidth: 240 }}>
-                    <ErrorCell msg={p.error_msg} />
+                    <NotaCell msg={p.error_msg} validacion={p.validacion_resultado} />
                   </td>
                 </tr>
               ))}
