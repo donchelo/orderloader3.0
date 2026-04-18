@@ -161,9 +161,13 @@ function buildPreciosHtml(db: any, rows: Array<Record<string, unknown>>): string
       : `<span style="color:#dc3545;font-weight:bold">$0 ⚠</span>`;
 
   const secciones = relevantes.map(row => {
-    const lineas = db.prepare(
+    const excluidos = parseExcluidos(row);
+    const todasLineas = db.prepare(
       "SELECT codigo_producto, cantidad, precio_unitario, subtotal_item FROM pedidos_detalle WHERE orden_compra = ? ORDER BY id"
     ).all(row.orden_compra) as Array<{ codigo_producto: string; cantidad: number; precio_unitario: number; subtotal_item: number }>;
+    const lineas = excluidos.length
+      ? todasLineas.filter(l => !excluidos.includes(l.codigo_producto))
+      : todasLineas;
 
     if (!lineas.length) return "";
 
