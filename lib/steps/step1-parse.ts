@@ -13,7 +13,7 @@ import { getDb, logPipeline } from "../db";
 import { sendAlertEmail } from "../mailer";
 import { SapB1OrderSchema, type SapB1Order } from "../schemas";
 export type { SapB1Order };
-import { PROMPT_COMODIN, PROMPT_EXITO, PROMPT_HERMECO } from "../prompts";
+import { PROMPT_COMODIN, PROMPT_EXITO, PROMPT_HERMECO, PROMPT_EUROCORSETT, PROMPT_INDUSTRIASCORY, PROMPT_ESTUDIOMODA, PROMPT_PINTURAS_PRIME, PROMPT_MANUTEX, PROMPT_ELGLOBO, PROMPT_SERVICIO_COMPLETO, PROMPT_ICVO, PROMPT_PRODUEMPAK } from "../prompts";
 
 export interface StepResult {
   procesados: number;
@@ -148,9 +148,18 @@ async function notificarPDFNoTamaprint(
 // ── Clientes soportados ───────────────────────────────────────────────────────
 
 const CLIENTES: Array<{ carpeta: string; nombre: string; prompt: string }> = [
-  { carpeta: "Comodin", nombre: "COMODIN", prompt: PROMPT_COMODIN },
-  { carpeta: "Exito",   nombre: "EXITO",   prompt: PROMPT_EXITO   },
-  { carpeta: "Hermeco", nombre: "HERMECO", prompt: PROMPT_HERMECO },
+  { carpeta: "Comodin",     nombre: "COMODIN",     prompt: PROMPT_COMODIN     },
+  { carpeta: "Exito",       nombre: "EXITO",       prompt: PROMPT_EXITO       },
+  { carpeta: "Hermeco",     nombre: "HERMECO",     prompt: PROMPT_HERMECO     },
+  { carpeta: "Eurocorsett",    nombre: "EUROCORSETT",    prompt: PROMPT_EUROCORSETT    },
+  { carpeta: "IndustriasCory", nombre: "INDUSTRIASCORY", prompt: PROMPT_INDUSTRIASCORY },
+  { carpeta: "EstudioModa",    nombre: "ESTUDIOMODA",    prompt: PROMPT_ESTUDIOMODA    },
+  { carpeta: "PinturasPrime",  nombre: "PINTURASPRIME",  prompt: PROMPT_PINTURAS_PRIME },
+  { carpeta: "Manutex",        nombre: "MANUTEX",        prompt: PROMPT_MANUTEX        },
+  { carpeta: "ElGlobo",          nombre: "ELGLOBO",          prompt: PROMPT_ELGLOBO          },
+  { carpeta: "ServicioCompleto", nombre: "SERVICIOCOMPLETO", prompt: PROMPT_SERVICIO_COMPLETO },
+  { carpeta: "ICVO",             nombre: "ICVO",             prompt: PROMPT_ICVO             },
+  { carpeta: "Produempak",       nombre: "PRODUEMPAK",       prompt: PROMPT_PRODUEMPAK       },
 ];
 
 // Todas las carpetas a escanear (incluye "Otros" para PDFs mal clasificados en step0)
@@ -161,16 +170,34 @@ const CARPETAS_A_ESCANEAR = [...CLIENTES.map(c => c.carpeta), "Otros"];
 // Se normalizan quitando puntos para matchear "800.069.933" y "800069933" por igual.
 
 const CLIENT_NITS: Array<{ carpeta: string; nits: string[] }> = [
-  { carpeta: "Comodin", nits: ["800069933"] },
-  { carpeta: "Hermeco", nits: ["890924167"] },
-  { carpeta: "Exito",   nits: ["890900608"] },
+  { carpeta: "Comodin",     nits: ["800069933"] },
+  { carpeta: "Hermeco",     nits: ["890924167"] },
+  { carpeta: "Exito",       nits: ["890900608"] },
+  { carpeta: "Eurocorsett",    nits: ["811032857"] },
+  { carpeta: "IndustriasCory", nits: ["800131750"] },
+  { carpeta: "EstudioModa",    nits: ["890926803"] },
+  { carpeta: "PinturasPrime",  nits: ["800194203"] },
+  { carpeta: "Manutex",        nits: ["900426666"] },
+  { carpeta: "ElGlobo",          nits: ["800227956"] },
+  { carpeta: "ServicioCompleto", nits: ["900690157"] },
+  { carpeta: "ICVO",             nits: ["890932892"] },
+  { carpeta: "Produempak",       nits: ["900445797"] },
 ];
 
 // Keywords de texto como fallback (evitar falsos positivos — se usan solo si no hay NIT)
 const CLIENT_TEXT_KEYWORDS: Array<{ carpeta: string; keywords: string[] }> = [
-  { carpeta: "Comodin", keywords: ["gco", "comodin", "americanino", "gco.com.co"] },
-  { carpeta: "Hermeco", keywords: ["hermeco", "offcorss", "offcorss.com"] },
-  { carpeta: "Exito",   keywords: ["grupoexito", "grupo-exito", "grupo exito", "grupo éxito"] },
+  { carpeta: "Comodin",     keywords: ["gco", "comodin", "americanino", "gco.com.co"] },
+  { carpeta: "Hermeco",     keywords: ["hermeco", "offcorss", "offcorss.com"] },
+  { carpeta: "Exito",       keywords: ["grupoexito", "grupo-exito", "grupo exito", "grupo éxito"] },
+  { carpeta: "Eurocorsett",    keywords: ["eurocorsett", "eurocorsett.com"] },
+  { carpeta: "IndustriasCory", keywords: ["industrias cory", "industriascory", "cory s.a.s"] },
+  { carpeta: "EstudioModa",    keywords: ["estudio de moda", "estudiomoda", "890926803"] },
+  { carpeta: "PinturasPrime",  keywords: ["pinturas prime", "pinturasprime", "800194203", "pinturasprime.com"] },
+  { carpeta: "Manutex",        keywords: ["manutex", "comercializadora manutex", "900426666"] },
+  { carpeta: "ElGlobo",          keywords: ["el globo", "elglobo", "c.i. el globo", "800227956"] },
+  { carpeta: "ServicioCompleto", keywords: ["servicio completo", "serviciocompleto", "900690157"] },
+  { carpeta: "ICVO",             keywords: ["icvo", "icvo.com.co", "890932892"] },
+  { carpeta: "Produempak",       keywords: ["produempak", "900445797"] },
 ];
 
 function detectClientFromPdf(pdfText: string): string | null {
