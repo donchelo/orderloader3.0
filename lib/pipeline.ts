@@ -75,7 +75,7 @@ async function runSteps(stepsToRun: typeof STEPS, onStep?: PipelineOptions["onSt
 export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResult[]> {
   const { fromStep = 0, toStep = 7, onlyStep, maxIterations = 50, onStep } = opts;
 
-  // Evitar runs simultáneos (cron + manual al mismo tiempo)
+  // Evitar runs simultáneos
   if (_running) {
     const blocked: StepResult = {
       step: -1, name: "pipeline",

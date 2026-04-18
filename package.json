@@ -5,8 +5,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "cron": "tsx scripts/cron-pipeline.ts"
+    "start": "next start"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",
