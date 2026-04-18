@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import PipelineStatus from "./PipelineStatus";
+import { Button, cn } from "@/design-system";
 import type { Pedido } from "./PedidoTable";
 
 interface Item {
@@ -50,14 +51,13 @@ interface Props {
 }
 
 export default function PedidoDetail({ pedido, onClose, onRetryDone }: Props) {
-  const [items, setItems] = useState<Item[]>([]);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
-  const [loading, setLoading] = useState(false);
-
-  const [retrying, setRetrying] = useState(false);
+  const [items, setItems]           = useState<Item[]>([]);
+  const [logs, setLogs]             = useState<LogEntry[]>([]);
+  const [loading, setLoading]       = useState(false);
+  const [retrying, setRetrying]     = useState(false);
   const [retrySteps, setRetrySteps] = useState<StepResult[]>([]);
   const [retryError, setRetryError] = useState<string | null>(null);
-  const [retryDone, setRetryDone] = useState(false);
+  const [retryDone, setRetryDone]   = useState(false);
 
   useEffect(() => {
     if (!pedido) return;
@@ -71,9 +71,7 @@ export default function PedidoDetail({ pedido, onClose, onRetryDone }: Props) {
 
     fetch(`/api/pedidos/${pedido.id}`)
       .then(r => r.json())
-      .then(data => {
-        if (data.ok) { setItems(data.items); setLogs(data.logs); }
-      })
+      .then(data => { if (data.ok) { setItems(data.items); setLogs(data.logs); } })
       .finally(() => setLoading(false));
   }, [pedido]);
 
@@ -88,9 +86,9 @@ export default function PedidoDetail({ pedido, onClose, onRetryDone }: Props) {
       const res = await fetch(`/api/pedidos/${pedido.id}/retry`, { method: "POST" });
       if (!res.body) throw new Error("Sin stream");
 
-      const reader = res.body.getReader();
+      const reader  = res.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = "";
+      let buffer    = "";
 
       while (true) {
         const { done, value } = await reader.read();
@@ -101,8 +99,8 @@ export default function PedidoDetail({ pedido, onClose, onRetryDone }: Props) {
         for (const line of lines) {
           if (!line.startsWith("data: ")) continue;
           const json = JSON.parse(line.slice(6));
-          if (json.type === "step") setRetrySteps(prev => [...prev, json.result]);
-          else if (json.type === "done") { setRetryDone(true); onRetryDone(); }
+          if (json.type === "step")  setRetrySteps(prev => [...prev, json.result]);
+          else if (json.type === "done")  { setRetryDone(true); onRetryDone(); }
           else if (json.type === "error") setRetryError(json.error);
         }
       }
@@ -122,137 +120,140 @@ export default function PedidoDetail({ pedido, onClose, onRetryDone }: Props) {
       {/* Overlay */}
       <div
         onClick={onClose}
-        style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.3)", zIndex: 40 }}
+        className="fixed inset-0 bg-erie-black/30 z-40 backdrop-blur-[2px]"
       />
 
       {/* Drawer */}
-      <div style={{
-        position: "fixed", top: 0, right: 0, bottom: 0, width: 560,
-        background: "#fff", zIndex: 50, display: "flex", flexDirection: "column",
-        boxShadow: "-4px 0 20px rgba(0,0,0,0.15)",
-      }}>
+      <div className="fixed top-0 right-0 bottom-0 w-[560px] bg-white z-50 flex flex-col shadow-[-4px_0_24px_rgba(0,0,0,0.12)]">
+
         {/* Header */}
-        <div style={{ padding: "16px 20px", borderBottom: "1px solid #e2e8f0", display: "flex", alignItems: "center", gap: 12 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontSize: 16, fontWeight: 700 }}>OC {pedido.orden_compra}</div>
-            <div style={{ fontSize: 12, color: "#64748b", marginTop: 2 }}>{pedido.cliente_nombre}</div>
+        <div className="px-5 py-4 border-b border-erie-black/10 flex items-center gap-3">
+          <div className="flex-1 min-w-0">
+            <div className="text-base font-bold tracking-[0.04em]">OC {pedido.orden_compra}</div>
+            <div className="text-xs text-cadet-gray mt-0.5 truncate">{pedido.cliente_nombre}</div>
           </div>
           <PipelineStatus estado={pedido.estado} />
           <button
             onClick={onClose}
-            style={{ background: "none", border: "none", fontSize: 20, cursor: "pointer", color: "#64748b", padding: "0 4px" }}
+            className="text-cadet-gray hover:text-erie-black transition-colors text-lg leading-none px-1 cursor-pointer bg-transparent border-none"
           >
             ✕
           </button>
         </div>
 
         {/* Scrollable body */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}>
+        <div className="flex-1 overflow-y-auto px-5 py-4 flex flex-col gap-4">
           {loading ? (
-            <div style={{ textAlign: "center", padding: 32, color: "#64748b" }}>Cargando…</div>
+            <div className="py-8 text-center text-cadet-gray text-sm">Cargando…</div>
           ) : (
             <>
-              {/* Error completo */}
+              {/* Error msg */}
               {pedido.error_msg && (
-                <div style={{ background: "#fff1f2", border: "1px solid #fecdd3", borderRadius: 6, padding: "12px 14px", marginBottom: 16, fontSize: 13 }}>
-                  <div style={{ fontWeight: 600, marginBottom: 4 }}>Error</div>
-                  <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>{pedido.error_msg}</div>
+                <div className="rounded-[0.75rem] border border-hot-orange/30 bg-hot-orange/5 px-4 py-3 text-sm">
+                  <div className="font-semibold mb-1 text-hot-orange text-xs uppercase tracking-[0.06em]">Error</div>
+                  <div className="whitespace-pre-wrap break-words text-erie-black/80">{pedido.error_msg}</div>
                 </div>
               )}
 
               {/* Retry */}
               {isError && !retryDone && (
-                <button
+                <Button
                   onClick={handleRetry}
                   disabled={retrying}
-                  style={{
-                    width: "100%", padding: "10px", marginBottom: 16,
-                    background: retrying ? "#e9ecef" : "#000", color: retrying ? "#000" : "#fff",
-                    border: "1px solid #000", borderRadius: 6, fontSize: 14, fontWeight: 600,
-                    cursor: retrying ? "not-allowed" : "pointer",
-                  }}
+                  variant="primary"
+                  size="md"
+                  className="w-full"
                 >
-                  {retrying ? "⏳ Reintentando…" : "↺ Reintentar pedido"}
-                </button>
+                  {retrying ? "Reintentando…" : "↺ Reintentar pedido"}
+                </Button>
               )}
 
               {/* Retry progress */}
               {(retrySteps.length > 0 || retrying) && (
-                <div style={{ border: "1px solid #e2e8f0", borderRadius: 6, overflow: "hidden", marginBottom: 16 }}>
+                <div className="border border-erie-black/10 rounded-[0.75rem] overflow-hidden">
                   {retrySteps.map(r => (
-                    <div key={`${r.step}-${r.name}`} style={{
-                      display: "flex", gap: 10, padding: "7px 12px", fontSize: 12,
-                      background: r.errores > 0 ? "#fff1f2" : "#f0fdf4",
-                      borderBottom: "1px solid #f1f5f9",
-                    }}>
-                      <span style={{ color: "#64748b", minWidth: 16 }}>{r.step}</span>
-                      <span style={{ flex: 1 }}>{STEP_LABELS[r.name] ?? r.name}</span>
-                      <span style={{ color: "#16a34a" }}>✓{r.procesados}</span>
-                      {r.errores > 0 && <span style={{ color: "#dc2626" }}>✗{r.errores}</span>}
-                      <span style={{ color: "#94a3b8" }}>{r.duracionMs}ms</span>
+                    <div
+                      key={`${r.step}-${r.name}`}
+                      className={cn(
+                        "flex gap-3 px-4 py-2 text-xs border-b border-erie-black/5 last:border-0",
+                        r.errores > 0 ? "bg-hot-orange/5" : "bg-moderate-blue/4"
+                      )}
+                    >
+                      <span className="font-mono text-cadet-gray min-w-[1rem]">{r.step}</span>
+                      <span className="flex-1">{STEP_LABELS[r.name] ?? r.name}</span>
+                      <span className="text-moderate-blue">✓{r.procesados}</span>
+                      {r.errores > 0 && <span className="text-hot-orange">✗{r.errores}</span>}
+                      <span className="font-mono text-cadet-gray">{r.duracionMs}ms</span>
                     </div>
                   ))}
                   {retrying && (
-                    <div style={{ padding: "7px 12px", fontSize: 12, color: "#64748b" }}>⏳ Procesando…</div>
+                    <div className="px-4 py-2 text-xs text-cadet-gray">Procesando…</div>
                   )}
                   {retryDone && (
-                    <div style={{ padding: "7px 12px", fontSize: 12, color: "#16a34a", fontWeight: 600 }}>✅ Completado</div>
+                    <div className="px-4 py-2 text-xs font-semibold text-moderate-blue">Completado</div>
                   )}
                 </div>
               )}
+
               {retryError && (
-                <div style={{ background: "#fff1f2", padding: "10px 12px", borderRadius: 6, fontSize: 12, marginBottom: 16 }}>
+                <div className="rounded-[0.75rem] border border-hot-orange/30 bg-hot-orange/5 px-4 py-3 text-xs text-erie-black/80">
                   {retryError}
                 </div>
               )}
 
-              {/* Ítems */}
-              <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>
-                Ítems ({items.length})
-              </div>
-              {items.length === 0 ? (
-                <div style={{ fontSize: 12, color: "#94a3b8", marginBottom: 16 }}>Sin ítems registrados</div>
-              ) : (
-                <div style={{ overflowX: "auto", marginBottom: 16 }}>
-                  <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 12 }}>
-                    <thead>
-                      <tr style={{ background: "#f8fafc", borderBottom: "1px solid #e2e8f0" }}>
-                        <th style={{ padding: "6px 8px", textAlign: "left" }}>Código</th>
-                        <th style={{ padding: "6px 8px", textAlign: "left" }}>Descripción</th>
-                        <th style={{ padding: "6px 8px", textAlign: "right" }}>Cant.</th>
-                        <th style={{ padding: "6px 8px", textAlign: "right" }}>Precio</th>
-                        <th style={{ padding: "6px 8px", textAlign: "right" }}>Subtotal</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {items.map(item => (
-                        <tr key={item.id} style={{ borderBottom: "1px solid #f1f5f9" }}>
-                          <td style={{ padding: "5px 8px", fontFamily: "monospace" }}>{item.codigo_producto}</td>
-                          <td style={{ padding: "5px 8px", color: "#374151" }}>{item.descripcion || "—"}</td>
-                          <td style={{ padding: "5px 8px", textAlign: "right" }}>{item.cantidad}</td>
-                          <td style={{ padding: "5px 8px", textAlign: "right" }}>{formatCOP(item.precio_unitario)}</td>
-                          <td style={{ padding: "5px 8px", textAlign: "right", fontWeight: 600 }}>{formatCOP(item.subtotal_item)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+              {/* Items */}
+              <div>
+                <div className="text-xs font-semibold uppercase tracking-[0.06em] text-cadet-gray mb-2">
+                  Ítems ({items.length})
                 </div>
-              )}
+                {items.length === 0 ? (
+                  <div className="text-xs text-cadet-gray">Sin ítems registrados</div>
+                ) : (
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-xs border-collapse">
+                      <thead>
+                        <tr className="border-b border-erie-black/10 bg-erie-black/3">
+                          {["Código", "Descripción", "Cant.", "Precio", "Subtotal"].map(h => (
+                            <th key={h} className={cn(
+                              "px-2 py-2 font-semibold text-cadet-gray",
+                              ["Cant.", "Precio", "Subtotal"].includes(h) ? "text-right" : "text-left"
+                            )}>{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map(item => (
+                          <tr key={item.id} className="border-b border-erie-black/5 last:border-0">
+                            <td className="px-2 py-1.5 font-mono">{item.codigo_producto}</td>
+                            <td className="px-2 py-1.5 text-erie-black/70">{item.descripcion || "—"}</td>
+                            <td className="px-2 py-1.5 text-right font-mono">{item.cantidad}</td>
+                            <td className="px-2 py-1.5 text-right font-mono">{formatCOP(item.precio_unitario)}</td>
+                            <td className="px-2 py-1.5 text-right font-mono font-semibold">{formatCOP(item.subtotal_item)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
 
               {/* Log */}
               {logs.length > 0 && (
-                <>
-                  <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 8 }}>Historial</div>
-                  <div style={{ fontSize: 11, display: "flex", flexDirection: "column", gap: 4 }}>
+                <div>
+                  <div className="text-xs font-semibold uppercase tracking-[0.06em] text-cadet-gray mb-2">Historial</div>
+                  <div className="flex flex-col gap-1">
                     {logs.map(l => (
-                      <div key={l.id} style={{ display: "flex", gap: 8, color: l.estado_resultado === "ERROR" ? "#dc2626" : "#374151" }}>
-                        <span style={{ color: "#94a3b8", whiteSpace: "nowrap" }}>{l.ts.slice(5, 16)}</span>
-                        <span style={{ color: "#94a3b8" }}>f{l.fase}</span>
-                        <span style={{ flex: 1 }}>{l.mensaje}</span>
+                      <div key={l.id} className={cn(
+                        "flex gap-2 text-xs",
+                        l.estado_resultado === "ERROR" ? "text-hot-orange" : "text-erie-black/70"
+                      )}>
+                        <span className="font-mono text-cadet-gray whitespace-nowrap">{l.ts.slice(5, 16)}</span>
+                        <span className="font-mono text-cadet-gray">f{l.fase}</span>
+                        <span className="flex-1">{l.mensaje}</span>
                       </div>
                     ))}
                   </div>
-                </>
+                </div>
               )}
             </>
           )}

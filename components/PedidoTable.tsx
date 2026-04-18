@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import PipelineStatus from "./PipelineStatus";
+import { Button, Badge, cn } from "@/design-system";
 
 export interface Pedido {
   id: number;
@@ -51,20 +52,20 @@ function NotaCell({ msg, validacion }: { msg: string | null; validacion: string 
     } catch { return []; }
   })();
 
-  const hasDifs = diferencias.length > 0;
-  const msgLong = !!msg && msg.length > MSG_PREVIEW_LEN;
+  const hasDifs  = diferencias.length > 0;
+  const msgLong  = !!msg && msg.length > MSG_PREVIEW_LEN;
 
   if (!msg && !hasDifs) return null;
 
   return (
-    <span>
+    <span className="text-xs">
       {msg && (
         <span>
           {msgLong && !expanded ? msg.slice(0, MSG_PREVIEW_LEN) + "… " : msg + " "}
           {msgLong && (
             <button
               onClick={() => setExpanded(v => !v)}
-              style={{ background: "none", border: "none", color: "#2563eb", textDecoration: "underline", cursor: "pointer", fontSize: 11, padding: 0 }}
+              className="text-moderate-blue underline cursor-pointer bg-transparent border-none p-0 text-xs"
             >
               {expanded ? "menos" : "ver más"}
             </button>
@@ -73,11 +74,11 @@ function NotaCell({ msg, validacion }: { msg: string | null; validacion: string 
       )}
       {hasDifs && (
         <>
-          <span style={{ color: "#dc2626", fontWeight: 600 }}>
+          <span className="text-hot-orange font-semibold">
             {diferencias.length} diferencia(s):{" "}
             {expanded
               ? diferencias.map((d, i) => (
-                  <span key={i} style={{ display: "block", fontWeight: 400, fontSize: 11 }}>
+                  <span key={i} className="block font-normal text-[10px]">
                     {d.campo}: PDF={d.pdf} / SAP={d.sap}
                   </span>
                 ))
@@ -85,7 +86,7 @@ function NotaCell({ msg, validacion }: { msg: string | null; validacion: string 
           </span>
           <button
             onClick={() => setExpanded(v => !v)}
-            style={{ marginLeft: 6, background: "none", border: "none", color: "#000", textDecoration: "underline", cursor: "pointer", fontSize: 11, padding: 0 }}
+            className="ml-1.5 text-erie-black underline cursor-pointer bg-transparent border-none p-0 text-xs"
           >
             {expanded ? "menos" : "más"}
           </button>
@@ -96,7 +97,7 @@ function NotaCell({ msg, validacion }: { msg: string | null; validacion: string 
 }
 
 export default function PedidoTable({ pedidos, filtroEstado, onFiltroChange, onSelect, onDelete }: Props) {
-  const [busqueda, setBusqueda] = useState("");
+  const [busqueda, setBusqueda]         = useState("");
   const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set());
 
   const filtered = (filtroEstado === "todos" ? pedidos : pedidos.filter(p => p.estado === filtroEstado))
@@ -106,25 +107,17 @@ export default function PedidoTable({ pedidos, filtroEstado, onFiltroChange, onS
 
   function toggleAll() {
     if (allFilteredSelected) {
-      setSeleccionados(prev => {
-        const next = new Set(prev);
-        filtered.forEach(p => next.delete(p.orden_compra));
-        return next;
-      });
+      setSeleccionados(prev => { const n = new Set(prev); filtered.forEach(p => n.delete(p.orden_compra)); return n; });
     } else {
-      setSeleccionados(prev => {
-        const next = new Set(prev);
-        filtered.forEach(p => next.add(p.orden_compra));
-        return next;
-      });
+      setSeleccionados(prev => { const n = new Set(prev); filtered.forEach(p => n.add(p.orden_compra)); return n; });
     }
   }
 
   function toggleOne(oc: string) {
     setSeleccionados(prev => {
-      const next = new Set(prev);
-      next.has(oc) ? next.delete(oc) : next.add(oc);
-      return next;
+      const n = new Set(prev);
+      n.has(oc) ? n.delete(oc) : n.add(oc);
+      return n;
     });
   }
 
@@ -135,14 +128,12 @@ export default function PedidoTable({ pedidos, filtroEstado, onFiltroChange, onS
     setSeleccionados(new Set());
   }
 
-  // Derive available states from data
   const stateCounts = pedidos.reduce((acc, p) => {
     acc[p.estado] = (acc[p.estado] || 0) + 1;
     return acc;
   }, {} as Record<string, number>);
 
   const activeStates = Object.keys(stateCounts).sort((a, b) => {
-    // Sort logic: Errors at the end, CERRADO near the end, others by frequency or name
     if (a.startsWith("ERROR") && !b.startsWith("ERROR")) return 1;
     if (!a.startsWith("ERROR") && b.startsWith("ERROR")) return -1;
     if (a === "CERRADO") return 1;
@@ -151,175 +142,148 @@ export default function PedidoTable({ pedidos, filtroEstado, onFiltroChange, onS
   });
 
   return (
-    <div>
-      {/* Búsqueda + Eliminar */}
-      <div style={{ marginBottom: 12, display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
-        <div>
+    <div className="flex flex-col gap-4">
+      {/* Search + Delete */}
+      <div className="flex gap-3 items-center flex-wrap">
+        <div className="relative flex items-center">
           <input
             type="text"
             placeholder="Buscar por cliente…"
             value={busqueda}
             onChange={e => setBusqueda(e.target.value)}
-            style={{
-              padding: "7px 12px", fontSize: 13, border: "1px solid #dee2e6",
-              borderRadius: 6, width: 240, outline: "none", color: "#000",
-            }}
+            className="pl-4 pr-9 py-2 text-sm border border-erie-black/20 rounded-[9999px] w-60 outline-none focus:border-erie-black bg-white/60 placeholder:text-cadet-gray transition-colors"
           />
           {busqueda && (
             <button
               onClick={() => setBusqueda("")}
-              style={{ marginLeft: 8, background: "none", border: "none", cursor: "pointer", fontSize: 13, color: "#000" }}
+              className="absolute right-3 text-cadet-gray hover:text-erie-black transition-colors text-sm"
             >
               ✕
             </button>
           )}
         </div>
+
         {seleccionados.size > 0 && (
-          <button
-            onClick={handleDelete}
-            style={{
-              background: "#dc2626", color: "#fff", border: "none",
-              borderRadius: 6, padding: "7px 16px", fontSize: 13, cursor: "pointer", fontWeight: 600,
-            }}
-          >
+          <Button variant="accent" size="sm" onClick={handleDelete}>
             Eliminar {seleccionados.size} seleccionado(s)
-          </button>
+          </Button>
         )}
       </div>
 
-      {/* Filtro */}
-      <div style={{ marginBottom: 20, display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-        <span style={{ fontSize: 13, fontWeight: 600, marginRight: 4, color: "#000" }}>Filtrar por estado:</span>
-        
-        {/* 'Todos' button */}
+      {/* State filters */}
+      <div className="flex gap-2 flex-wrap items-center">
+        <span className="text-xs font-semibold text-cadet-gray mr-1 tracking-[0.06em] uppercase">Estado:</span>
+
         <button
           onClick={() => onFiltroChange("todos")}
-          style={{
-            padding: "5px 14px",
-            borderRadius: 8,
-            border: "1px solid",
-            borderColor: filtroEstado === "todos" ? "#000" : "#e2e8f0",
-            background: filtroEstado === "todos" ? "#f1f5f9" : "#fff",
-            color: "#000",
-            fontSize: 12,
-            fontWeight: filtroEstado === "todos" ? 700 : 500,
-            cursor: "pointer",
-            transition: "all 0.2s",
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-          }}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-[9999px] px-3 h-7 text-xs font-semibold tracking-[0.04em] transition-all",
+            filtroEstado === "todos"
+              ? "bg-erie-black text-white"
+              : "border border-erie-black/20 text-erie-black hover:border-erie-black"
+          )}
         >
-          <span>Todos</span>
-          <span style={{ 
-            background: "#e2e8f0", 
-            padding: "1px 6px", 
-            borderRadius: 10, 
-            fontSize: 10,
-            fontWeight: 700
-          }}>
+          Todos
+          <span className={cn(
+            "text-[10px] font-bold px-1.5 py-0.5 rounded-[9999px]",
+            filtroEstado === "todos" ? "bg-white/20 text-white" : "bg-erie-black/8 text-cadet-gray"
+          )}>
             {pedidos.length}
           </span>
         </button>
 
-        {/* Dynamic State buttons */}
         {activeStates.map(e => (
           <button
             key={e}
             onClick={() => onFiltroChange(e)}
-            style={{
-              padding: "5px 14px",
-              borderRadius: 8,
-              border: "1px solid",
-              borderColor: filtroEstado === e ? "#000" : "#e2e8f0",
-              background: filtroEstado === e ? "#f1f5f9" : "#fff",
-              color: "#000",
-              fontSize: 12,
-              fontWeight: filtroEstado === e ? 700 : 500,
-              cursor: "pointer",
-              transition: "all 0.2s",
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-            }}
+            className={cn(
+              "inline-flex items-center gap-1.5 rounded-[9999px] px-3 h-7 text-xs font-semibold tracking-[0.04em] transition-all",
+              filtroEstado === e
+                ? "bg-erie-black text-white"
+                : "border border-erie-black/20 text-erie-black hover:border-erie-black"
+            )}
           >
-            <span>{e}</span>
-            <span style={{ 
-              background: filtroEstado === e ? "#cbd5e1" : "#f1f5f9", 
-              padding: "1px 6px", 
-              borderRadius: 10, 
-              fontSize: 10,
-              fontWeight: 700
-            }}>
+            {e}
+            <span className={cn(
+              "text-[10px] font-bold px-1.5 py-0.5 rounded-[9999px]",
+              filtroEstado === e ? "bg-white/20 text-white" : "bg-erie-black/8 text-cadet-gray"
+            )}>
               {stateCounts[e]}
             </span>
           </button>
         ))}
       </div>
 
-      {/* Tabla */}
+      {/* Table */}
       {filtered.length === 0 ? (
-        <div style={{ padding: "48px 0", textAlign: "center", color: "#000", background: "#f8fafc", borderRadius: 8, border: "1px dashed #e2e8f0" }}>
-          <div style={{ fontSize: 24, marginBottom: 8 }}>🔍</div>
-          <div style={{ fontWeight: 600 }}>No hay pedidos{filtroEstado !== "todos" ? ` en estado ${filtroEstado}` : ""}.</div>
-          <div style={{ fontSize: 12, marginTop: 4 }}>Intenta cambiar el filtro para ver otros resultados.</div>
+        <div className="py-12 text-center border border-dashed border-erie-black/15 rounded-[1rem] bg-white/40">
+          <div className="text-2xl mb-2">—</div>
+          <div className="font-semibold text-sm">No hay pedidos{filtroEstado !== "todos" ? ` en estado ${filtroEstado}` : ""}.</div>
+          <div className="text-xs text-cadet-gray mt-1">Cambia el filtro para ver otros resultados.</div>
         </div>
       ) : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%", fontSize: 13, color: "#000" }}>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm border-collapse">
             <thead>
-              <tr style={{ background: "#f8fafc", color: "#000", borderBottom: "2px solid #e2e8f0" }}>
-                <th style={{ padding: "12px 16px", textAlign: "center", width: 40 }}>
-                  <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll} />
+              <tr className="border-b-2 border-erie-black/10 bg-erie-black/3">
+                <th className="py-3 px-4 text-center w-10">
+                  <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll} className="cursor-pointer" />
                 </th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700 }}>OC</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700 }}>Cliente</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700 }}>Solicitado</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700 }}>Entrega</th>
-                <th style={{ padding: "12px 16px", textAlign: "right", fontWeight: 700 }}>Subtotal</th>
-                <th style={{ padding: "12px 16px", textAlign: "center", fontWeight: 700 }}>Estado</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700 }}>SAP Doc</th>
-                <th style={{ padding: "12px 16px", textAlign: "left", fontWeight: 700 }}>Nota</th>
+                {["OC", "Cliente", "Solicitado", "Entrega", "Subtotal", "Estado", "SAP Doc", "Nota"].map(h => (
+                  <th key={h} className={cn(
+                    "py-3 px-4 font-semibold tracking-[0.04em] text-xs uppercase text-cadet-gray",
+                    h === "Subtotal" ? "text-right" : h === "Estado" ? "text-center" : "text-left"
+                  )}>
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
             <tbody>
-              {filtered.map((p) => (
-                <tr
-                  key={p.orden_compra}
-                  onClick={() => onSelect(p)}
-                  style={{
-                    borderBottom: "1px solid #f1f5f9",
-                    background: seleccionados.has(p.orden_compra) ? "#eff6ff" : p.estado.startsWith("ERROR") ? "#fff1f2" : undefined,
-                    cursor: "pointer",
-                  }}
-                  onMouseEnter={(e) => e.currentTarget.style.background = seleccionados.has(p.orden_compra) ? "#dbeafe" : p.estado.startsWith("ERROR") ? "#ffe4e6" : "#f8fafc"}
-                  onMouseLeave={(e) => e.currentTarget.style.background = seleccionados.has(p.orden_compra) ? "#eff6ff" : p.estado.startsWith("ERROR") ? "#fff1f2" : "transparent"}
-                >
-                  <td style={{ padding: "10px 16px", textAlign: "center" }} onClick={e => { e.stopPropagation(); toggleOne(p.orden_compra); }}>
-                    <input type="checkbox" checked={seleccionados.has(p.orden_compra)} onChange={() => toggleOne(p.orden_compra)} />
-                  </td>
-                  <td style={{ padding: "10px 16px", fontWeight: 600 }}>{p.orden_compra}</td>
-                  <td style={{ padding: "10px 16px" }}>{p.cliente_nombre}</td>
-                  <td style={{ padding: "10px 16px" }}>{formatDate(p.fecha_solicitado)}</td>
-                  <td style={{ padding: "10px 16px" }}>{formatDate(p.fecha_entrega_general)}</td>
-                  <td style={{ padding: "10px 16px", textAlign: "right" }}>{formatCOP(p.subtotal)}</td>
-                  <td style={{ padding: "10px 16px", textAlign: "center" }}>
-                    <PipelineStatus estado={p.estado} />
-                  </td>
-                  <td style={{ padding: "10px 16px", color: "#000", fontSize: 12 }}>{p.sap_doc_num ?? "—"}</td>
-                  <td style={{ padding: "10px 16px", color: "#000", fontSize: 12, maxWidth: 240 }}>
-                    <NotaCell msg={p.error_msg} validacion={p.validacion_resultado} />
-                  </td>
-                </tr>
-              ))}
+              {filtered.map((p) => {
+                const isErr  = p.estado.startsWith("ERROR");
+                const isSel  = seleccionados.has(p.orden_compra);
+                return (
+                  <tr
+                    key={p.orden_compra}
+                    onClick={() => onSelect(p)}
+                    className={cn(
+                      "border-b border-erie-black/5 cursor-pointer transition-colors",
+                      isSel  ? "bg-moderate-blue/8 hover:bg-moderate-blue/12" :
+                      isErr  ? "bg-hot-orange/5 hover:bg-hot-orange/10" :
+                               "hover:bg-erie-black/3"
+                    )}
+                  >
+                    <td
+                      className="py-2.5 px-4 text-center"
+                      onClick={e => { e.stopPropagation(); toggleOne(p.orden_compra); }}
+                    >
+                      <input type="checkbox" checked={isSel} onChange={() => toggleOne(p.orden_compra)} className="cursor-pointer" />
+                    </td>
+                    <td className="py-2.5 px-4 font-semibold font-mono text-xs">{p.orden_compra}</td>
+                    <td className="py-2.5 px-4">{p.cliente_nombre}</td>
+                    <td className="py-2.5 px-4 font-mono text-xs" data-mono>{formatDate(p.fecha_solicitado)}</td>
+                    <td className="py-2.5 px-4 font-mono text-xs" data-mono>{formatDate(p.fecha_entrega_general)}</td>
+                    <td className="py-2.5 px-4 text-right font-mono text-xs" data-mono>{formatCOP(p.subtotal)}</td>
+                    <td className="py-2.5 px-4 text-center">
+                      <PipelineStatus estado={p.estado} />
+                    </td>
+                    <td className="py-2.5 px-4 font-mono text-xs text-cadet-gray">{p.sap_doc_num ?? "—"}</td>
+                    <td className="py-2.5 px-4 max-w-[240px]">
+                      <NotaCell msg={p.error_msg} validacion={p.validacion_resultado} />
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
-          <div style={{ marginTop: 12, fontSize: 12, color: "#64748b", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span>Mostrando {filtered.length} de {pedidos.length} pedido(s)</span>
+
+          <div className="mt-3 flex justify-between items-center text-xs text-cadet-gray">
+            <span className="font-mono">{filtered.length} / {pedidos.length} pedido(s)</span>
             {filtroEstado !== "todos" && (
-              <button 
+              <button
                 onClick={() => onFiltroChange("todos")}
-                style={{ background: "none", border: "none", color: "#000", textDecoration: "underline", cursor: "pointer", fontSize: 12 }}
+                className="text-erie-black underline cursor-pointer bg-transparent border-none p-0 text-xs"
               >
                 Limpiar filtros
               </button>

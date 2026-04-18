@@ -1,26 +1,49 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #000000;
+/* ─── Ai4U Design System — Brand Tokens ─────────────────────────────────── */
+
+@theme {
+  /* Colors */
+  --color-mint-cream:     #eaf4eb;
+  --color-erie-black:     #171717;
+  --color-hot-orange:     #ff6e00;
+  --color-moderate-blue:  #3daed1;
+  --color-cadet-gray:     #94989b;
+  --color-white:          #ffffff;
+
+  /* Semantic */
+  --color-background:     #eaf4eb;
+  --color-foreground:     #171717;
+  --color-muted:          #94989b;
+  --color-accent:         #ff6e00;
+
+  /* Fonts — CSS vars injected by next/font/local in layout.tsx */
+  --font-sans: var(--font-red-hat), system-ui, sans-serif;
+  --font-mono: var(--font-necto-mono), ui-monospace, monospace;
+
+  /* Radius */
+  --radius-pill: 9999px;
+  --radius-card: 1rem;
+  --radius-sm:   0.5rem;
+
+  /* Letter spacing (brand spec: interletra 20 ≈ 0.05em) */
+  --tracking-brand: 0.05em;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #ffffff;
-    --foreground: #000000;
-  }
-}
+/* ─── Base ───────────────────────────────────────────────────────────────── */
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--color-mint-cream);
+  color:            var(--color-erie-black);
+  font-family:      var(--font-sans);
+  letter-spacing:   var(--tracking-brand);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Numbers & special chars use Necto Mono */
+.font-mono,
+[data-mono],
+time, code, kbd, samp {
+  font-family: var(--font-mono);
+  letter-spacing: 0;
 }

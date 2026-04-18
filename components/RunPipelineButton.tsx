@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Button, cn } from "@/design-system";
 
 interface StepResult {
   step: number;
@@ -28,12 +29,12 @@ interface Props {
 }
 
 export default function RunPipelineButton({ onComplete }: Props) {
-  const [running, setRunning] = useState(false);
-  const [stopping, setStopping] = useState(false);
-  const [results, setResults] = useState<StepResult[]>([]);
-  const [currentStep, setCurrentStep] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const [running, setRunning]             = useState(false);
+  const [stopping, setStopping]           = useState(false);
+  const [results, setResults]             = useState<StepResult[]>([]);
+  const [currentStep, setCurrentStep]     = useState<string | null>(null);
+  const [error, setError]                 = useState<string | null>(null);
+  const [done, setDone]                   = useState(false);
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
 
   async function handleRun() {
@@ -60,9 +61,9 @@ export default function RunPipelineButton({ onComplete }: Props) {
 
       if (!res.body) throw new Error("Sin stream");
 
-      const reader = res.body.getReader();
+      const reader  = res.body.getReader();
       const decoder = new TextDecoder();
-      let buffer = "";
+      let buffer    = "";
 
       while (true) {
         const { done: streamDone, value } = await reader.read();
@@ -79,7 +80,6 @@ export default function RunPipelineButton({ onComplete }: Props) {
           if (json.type === "step") {
             const r: StepResult = json.result;
             setResults(prev => [...prev, r]);
-            // Hint at next step
             setCurrentStep(r.step < 7 ? Object.keys(STEP_LABELS)[r.step + 1] : null);
           } else if (json.type === "done") {
             setCurrentStep(null);
@@ -116,91 +116,79 @@ export default function RunPipelineButton({ onComplete }: Props) {
   }
 
   return (
-    <div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <button
+    <div className="flex flex-col gap-3">
+      {/* Buttons */}
+      <div className="flex gap-3 items-center">
+        <Button
           onClick={handleRun}
           disabled={running}
-          style={{
-            background: running ? "#e9ecef" : "#f8f9fa",
-            color: "#000",
-            border: "1px solid #000",
-            borderRadius: "6px",
-            padding: "10px 24px",
-            fontSize: "14px",
-            fontWeight: 600,
-            cursor: running ? "not-allowed" : "pointer",
-          }}
+          variant="primary"
+          size="md"
         >
-          {running ? "⏳ Ejecutando…" : "▶ Correr Pipeline"}
-        </button>
+          {running ? "Ejecutando…" : "▶ Correr Pipeline"}
+        </Button>
 
         {running && (
-          <button
+          <Button
             onClick={handleStop}
             disabled={stopping}
-            style={{
-              background: stopping ? "#e9ecef" : "#fff3cd",
-              color: "#000",
-              border: "1px solid #856404",
-              borderRadius: "6px",
-              padding: "10px 20px",
-              fontSize: "14px",
-              fontWeight: 600,
-              cursor: stopping ? "not-allowed" : "pointer",
-            }}
+            variant="secondary"
+            size="md"
           >
             {stopping ? "Deteniendo…" : "⏹ Pausar"}
-          </button>
+          </Button>
         )}
       </div>
 
+      {/* Error */}
       {error && (
-        <div style={{ marginTop: 12, background: "#f8d7da", color: "#000", padding: "10px 14px", borderRadius: 6 }}>
-          Error: {error}
+        <div className="text-sm px-4 py-3 rounded-[0.5rem] border border-hot-orange/40 bg-hot-orange/8 text-erie-black">
+          {error}
         </div>
       )}
 
+      {/* Progress panel */}
       {(results.length > 0 || running) && (
-        <div style={{ marginTop: 16, border: "1px solid #dee2e6", borderRadius: 8, overflow: "hidden" }}>
-          <div style={{ background: "#f8fafc", padding: "10px 16px", borderBottom: "1px solid #dee2e6", fontSize: 13, fontWeight: 600 }}>
-            {done ? "✅ Pipeline completado" : stopping ? "⏹ Deteniendo tras correo actual…" : "⏳ Ejecutando pipeline…"}
+        <div className="border border-erie-black/10 rounded-[1rem] overflow-hidden">
+          <div className="px-4 py-2.5 bg-erie-black/4 border-b border-erie-black/10 text-sm font-semibold">
+            {done
+              ? "Pipeline completado"
+              : stopping
+              ? "Deteniendo tras correo actual…"
+              : "Ejecutando pipeline…"}
           </div>
 
-          {/* Steps completados */}
           {results.map((r) => (
-            <div key={`${r.step}-${r.name}`} style={{ borderBottom: "1px solid #f1f5f9" }}>
+            <div key={`${r.step}-${r.name}`} className="border-b border-erie-black/5 last:border-0">
               <div
-                style={{
-                  display: "flex", alignItems: "center", gap: 12,
-                  padding: "8px 16px", fontSize: 13,
-                  background: r.errores > 0 ? "#fff1f2" : "#f0fdf4",
-                  cursor: r.detalles.length > 0 ? "pointer" : "default",
-                }}
+                className={cn(
+                  "flex items-center gap-3 px-4 py-2 text-sm",
+                  r.errores > 0 ? "bg-hot-orange/5" : "bg-moderate-blue/4",
+                  r.detalles.length > 0 && "cursor-pointer"
+                )}
                 onClick={() => r.detalles.length > 0 && toggleExpand(r.step)}
               >
-                <span style={{ fontWeight: 600, minWidth: 20, color: "#64748b" }}>{r.step}</span>
-                <span style={{ flex: 1 }}>{STEP_LABELS[r.name] ?? r.name}</span>
-                <span style={{ color: "#16a34a", fontSize: 12 }}>✓ {r.procesados}</span>
-                {r.errores > 0 && <span style={{ color: "#dc2626", fontSize: 12 }}>✗ {r.errores}</span>}
-                {r.saltados > 0 && <span style={{ color: "#94a3b8", fontSize: 12 }}>— {r.saltados}</span>}
-                <span style={{ color: "#94a3b8", fontSize: 11 }}>{r.duracionMs}ms</span>
+                <span className="font-mono text-xs text-cadet-gray min-w-[1.25rem]">{r.step}</span>
+                <span className="flex-1">{STEP_LABELS[r.name] ?? r.name}</span>
+                <span className="text-moderate-blue text-xs">✓ {r.procesados}</span>
+                {r.errores > 0 && <span className="text-hot-orange text-xs">✗ {r.errores}</span>}
+                {r.saltados > 0 && <span className="text-cadet-gray text-xs">— {r.saltados}</span>}
+                <span className="font-mono text-xs text-cadet-gray">{r.duracionMs}ms</span>
                 {r.detalles.length > 0 && (
-                  <span style={{ color: "#94a3b8", fontSize: 11 }}>{expandedSteps.has(r.step) ? "▲" : "▼"}</span>
+                  <span className="text-cadet-gray text-xs">{expandedSteps.has(r.step) ? "▲" : "▼"}</span>
                 )}
               </div>
               {expandedSteps.has(r.step) && (
-                <pre style={{ margin: 0, padding: "8px 16px 8px 48px", fontSize: 11, background: "#f8fafc", color: "#374151", overflowX: "auto" }}>
+                <pre className="m-0 pl-10 pr-4 py-2 text-xs bg-mint-cream/60 text-erie-black/70 overflow-x-auto">
                   {r.detalles.join("\n")}
                 </pre>
               )}
             </div>
           ))}
 
-          {/* Step en curso */}
           {running && currentStep && (
-            <div style={{ padding: "8px 16px", fontSize: 13, color: "#64748b", display: "flex", gap: 12, alignItems: "center" }}>
-              <span style={{ minWidth: 20 }}>⏳</span>
+            <div className="flex gap-3 items-center px-4 py-2 text-sm text-cadet-gray">
+              <span className="font-mono text-xs min-w-[1.25rem]">…</span>
               <span>{STEP_LABELS[currentStep] ?? currentStep}…</span>
             </div>
           )}
