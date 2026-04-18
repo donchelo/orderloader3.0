@@ -30,7 +30,7 @@ function validarSapB1Json(order: SapB1Order, clienteNombre: string): string[] {
     errores.push(`DocType inválido: '${order.DocType}' (esperado 'dDocument_Items')`);
   if (!/^CN\d+$/.test(order.CardCode ?? ""))
     errores.push(`CardCode inválido: '${order.CardCode}' (debe ser CN seguido de dígitos)`);
-  if (!/^\d{4,15}$/.test(order.NumAtCard ?? ""))
+  if (!/^[A-Za-z0-9][A-Za-z0-9\-\.\/]{2,19}$/.test(order.NumAtCard ?? ""))
     errores.push(`NumAtCard inválido: '${order.NumAtCard}'`);
 
   // Fechas YYYYMMDD
@@ -62,7 +62,7 @@ function validarSapB1Json(order: SapB1Order, clienteNombre: string): string[] {
     if (!line.SupplierCatNum?.trim()) {
       errores.push(`${ref}: SupplierCatNum vacío`);
     } else {
-      if (clienteNombre !== "EXITO" && /^0/.test(line.SupplierCatNum))
+      if (!["EXITO", "ELGLOBO", "PRODUEMPAK"].includes(clienteNombre) && /^0/.test(line.SupplierCatNum))
         errores.push(`${ref}: SupplierCatNum '${line.SupplierCatNum}' tiene cero inicial`);
       vistos.add(line.SupplierCatNum);
     }
