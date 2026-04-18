@@ -38,6 +38,8 @@ function formatDate(d: string | null): string {
 
 interface Diferencia { campo: string; pdf: string | number; sap: string | number; }
 
+const MSG_PREVIEW_LEN = 120;
+
 function NotaCell({ msg, validacion }: { msg: string | null; validacion: string | null }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -50,12 +52,25 @@ function NotaCell({ msg, validacion }: { msg: string | null; validacion: string 
   })();
 
   const hasDifs = diferencias.length > 0;
+  const msgLong = !!msg && msg.length > MSG_PREVIEW_LEN;
 
   if (!msg && !hasDifs) return null;
 
   return (
     <span>
-      {msg && <span>{msg} </span>}
+      {msg && (
+        <span>
+          {msgLong && !expanded ? msg.slice(0, MSG_PREVIEW_LEN) + "… " : msg + " "}
+          {msgLong && (
+            <button
+              onClick={() => setExpanded(v => !v)}
+              style={{ background: "none", border: "none", color: "#2563eb", textDecoration: "underline", cursor: "pointer", fontSize: 11, padding: 0 }}
+            >
+              {expanded ? "menos" : "ver más"}
+            </button>
+          )}
+        </span>
+      )}
       {hasDifs && (
         <>
           <span style={{ color: "#dc2626", fontWeight: 600 }}>

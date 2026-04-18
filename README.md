@@ -4,16 +4,20 @@
 
 ---
 
-## 🚀 Arquitectura en la Nube (Google Cloud VM)
-El sistema ha sido migrado de un entorno local a una **VM de Google Cloud** para operación 24/7.
+## 🚀 Despliegue Local (Docker)
 
-- **URL del Dashboard**: [http://34.59.114.103:3000](http://34.59.114.103:3000)
-- **Estado**: Producción (GCP Compute Engine).
-- **Zonas**: us-central1-a.
+El sistema corre completamente en local usando Docker.
+
+```bash
+docker compose up -d --build
+```
+
+- **Dashboard**: [http://localhost:3000](http://localhost:3000)
 
 ---
 
 ## ⚙️ Automatización y Pipeline
+
 El sistema procesa pedidos automáticamente de lunes a domingo.
 
 ### ⏰ Horario de Ejecución (Cron)
@@ -23,25 +27,29 @@ El sistema procesa pedidos automáticamente de lunes a domingo.
 
 ### 📂 Flujo de Carpetas (IMAP)
 El pipeline monitoriza y organiza los correos en la cuenta configurada:
-1.  **Origen**: `A A INGRESAR IA` (Solo los correos en esta carpeta inician el pipeline).
-2.  **Destino (Éxito)**: `A A INGRESADO` (Cuando el pedido se crea en SAP sin observaciones).
-3.  **Destino (Revisión)**: `A A REVISAR IA` (Cuando hay errores de IA, validación o SAP).
+1. **Origen**: `A A INGRESAR IA` (Solo los correos en esta carpeta inician el pipeline).
+2. **Destino (Éxito)**: `A A INGRESADO` (Cuando el pedido se crea en SAP sin observaciones).
+3. **Destino (Revisión)**: `A A REVISAR IA` (Cuando hay errores de IA, validación o SAP).
 
 ---
 
-## 🛠️ Herramientas de Desarrollo y Despliegue
+## 🛠️ Comandos útiles
 
-### Sincronización desde Laptop → VM
-Si realizas cambios en el código localmente, usa el script de despliegue para actualizar la nube automáticamente:
 ```bash
-./scripts/deploy.sh
-```
-*Este script automatiza: compresión, transferencia via SCP, npm install, build y reinicio del servidor en la VM.*
+# Levantar en producción
+docker compose up -d --build
 
-### Control de Costos de IA
-Para ver el consumo acumulado de tokens de Anthropic y el costo estimado por pedido:
-```bash
+# Ver logs del pipeline
+docker logs orderloader -f
+
+# Ejecutar pipeline manualmente
+npx tsx scripts/cron-pipeline.ts
+
+# Ver costos de IA
 npx tsx scripts/calculate-costs.ts
+
+# Desarrollo local
+npm run dev
 ```
 
 ---
@@ -49,17 +57,16 @@ npx tsx scripts/calculate-costs.ts
 ## 📁 Estructura del Proyecto
 - `/app`: Interfaz de usuario y rutas API (Next.js).
 - `/lib/steps`: Lógica individual de los 8 pasos del pipeline.
-- `/scripts`: Utilidades de automatización, costos y despliegue.
+- `/scripts`: Utilidades de automatización y costos.
 - `/lib/db.ts`: Gestión de base de datos local (SQLite).
-- `.data/`: Carpeta persistente que contiene la DB y el historial de descargas (Sincronizada con la VM).
+- `.data/`: Carpeta persistente con la DB e historial de pedidos (montada como volumen Docker).
 
 ---
 
 ## 🛡️ Notas de Seguridad
-- El sistema realiza un **Backup automático** de la base de datos antes de cada ejecución del pipeline.
-- Todas las credenciales están protegidas en el archivo `.env` (No compartido en el repositorio).
+- El sistema realiza un **backup automático** de la base de datos antes de cada ejecución del pipeline.
+- Todas las credenciales están en el archivo `.env` (no incluido en el repositorio).
 
 ---
 
 Developed for **Tamaprint** | 2026
-<!-- CI/CD Test: 2026-04-10 -->

@@ -95,30 +95,11 @@ export async function run(): Promise<StepResult> {
         `Orders(${docEntry})`,
         { "$select": "DocEntry,DocNum,NumAtCard,CardCode,DocDate,DocDueDate,TaxDate,DocTotal,DocumentLines" }
       );
-      const sapLines = (sapOrder.DocumentLines as Array<Record<string, unknown>>) ?? [];
+      // SAP devuelve todas las líneas (texto, servicio, packaging) — filtrar solo ítems reales
+      const sapLines = ((sapOrder.DocumentLines as Array<Record<string, unknown>>) ?? [])
+        .filter(l => String(l.SupplierCatNum ?? "").trim() !== "");
 
       const diferencias: Diferencia[] = [];
-
-      // ── Comparar cabecera ────────────────────────────────────────────────
-      const checks: [string, string, string][] = [
-        ["NumAtCard",  String(pdfData.NumAtCard),               String(sapOrder.NumAtCard ?? "")],
-        ["CardCode",   String(pdfData.CardCode),                String(sapOrder.CardCode ?? "")],
-        ["DocDate",    yyyymmddToIso(pdfData.DocDate),          normalizeDate(String(sapOrder.DocDate ?? ""))],
-        ["DocDueDate", yyyymmddToIso(pdfData.DocDueDate),       normalizeDate(String(sapOrder.DocDueDate ?? ""))],
-        ["TaxDate",    yyyymmddToIso(pdfData.TaxDate),          normalizeDate(String(sapOrder.TaxDate ?? ""))],
-      ];
-      for (const [campo, pdf, sap_val] of checks) {
-        if (pdf !== sap_val) diferencias.push({ campo, pdf, sap: sap_val });
-      }
-
-      // ── Comparar cantidad de líneas ──────────────────────────────────────
-      if (pdfData.DocumentLines.length !== sapLines.length) {
-        diferencias.push({
-          campo: "líneas totales",
-          pdf: pdfData.DocumentLines.length,
-          sap: sapLines.length,
-        });
-      }
 
       // ── Artículos excluidos en step4 (upload) ───────────────────────────
       const itemsExcluidosCodes: string[] = row.items_excluidos
@@ -132,12 +113,39 @@ export async function run(): Promise<StepResult> {
         });
       }
 
-      // ── Comparar cada línea por SupplierCatNum ───────────────────────────
-      for (const pdfLine of pdfData.DocumentLines) {
-        if (itemsExcluidosCodes.includes(String(pdfLine.SupplierCatNum))) continue;
+      // Líneas del PDF sin los ítems que fueron excluidos en el upload
+      const pdfLinesActivas = pdfData.DocumentLines.filter(
+        l => !itemsExcluidosCodes.includes(String(l.SupplierCatNum))
+      );
 
+      // ── Comparar cabecera ────────────────────────────────────────────────
+      const checks: [string, string, string][] = [
+        ["NumAtCard",  String(pdfData.NumAtCard),               String(sapOrder.NumAtCard ?? "")],
+        ["CardCode",   String(pdfData.CardCode),                String(sapOrder.CardCode ?? "")],
+        ["DocDate",    yyyymmddToIso(pdfData.DocDate),          normalizeDate(String(sapOrder.DocDate ?? ""))],
+        ["DocDueDate", yyyymmddToIso(pdfData.DocDueDate),       normalizeDate(String(sapOrder.DocDueDate ?? ""))],
+        ["TaxDate",    yyyymmddToIso(pdfData.TaxDate),          normalizeDate(String(sapOrder.TaxDate ?? ""))],
+      ];
+      for (const [campo, pdf, sap_val] of checks) {
+        if (pdf !== sap_val) diferencias.push({ campo, pdf, sap: sap_val });
+      }
+
+      // ── Comparar cantidad de líneas (sin excluidos, sin líneas de texto SAP) ──
+      if (pdfLinesActivas.length !== sapLines.length) {
+        diferencias.push({
+          campo: "líneas totales",
+          pdf: pdfLinesActivas.length,
+          sap: sapLines.length,
+        });
+      }
+
+      // ── Comparar cada línea por SupplierCatNum ───────────────────────────
+      // Normalizar: quitar ceros iniciales para que "014007383" === "14007383"
+      const normCat = (s: string) => String(s ?? "").replace(/^0+/, "") || "0";
+
+      for (const pdfLine of pdfLinesActivas) {
         const sapLine = sapLines.find(
-          l => String(l.SupplierCatNum ?? "") === String(pdfLine.SupplierCatNum)
+          l => normCat(String(l.SupplierCatNum ?? "")) === normCat(String(pdfLine.SupplierCatNum))
         );
         if (!sapLine) {
           diferencias.push({

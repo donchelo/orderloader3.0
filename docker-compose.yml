@@ -10,6 +10,8 @@ services:
     environment:
       # Carpeta donde la aplicación guardará DB y adjuntos según lib/config.ts
       - DATA_DIR=/app/.data
+      # Zona horaria Colombia (GMT-5) — evita desfase UTC en fechas SAP y cron
+      - TZ=America/Bogota
     env_file:
       - .env
     dns:

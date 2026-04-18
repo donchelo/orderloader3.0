@@ -40,15 +40,29 @@ Apply these mandatory conversion rules:
 
 **Numbers** (CRITICAL FOR CONSISTENCY):
 * Colombian format uses "." as thousands separator and "," as decimal separator
-* Quantity (Quantity): Values like "1.000" mean one thousand units, not one. Remove the thousand separator and convert to integer.
+* **CRITICAL RULE — dot is NEVER a decimal point in COP prices/quantities. It is ALWAYS a thousands separator.**
+  * "1.321" → 1321 (NOT 1.321, NOT 1.32)
+  * "3.967" → 3967 (NOT 3.967)
+  * "12.718" → 12718 (NOT 12.718)
+  * A decimal would look like "1.321,50" → 1321.50 (comma = decimal separator)
+* Quantity (Quantity): Remove the thousands separator dot and convert to integer.
   * "1.000" → 1000
   * "9.000" → 9000
-  * "126.000" → 126000
+  * "20.000" → 20000
+  * "1.321" → 1321
+  * "12.718" → 12718
 * For integers: Use whole numbers without decimals: 6000 (not 6000.00)
 * UnitPrice (UnitPrice): Decimal number. Remove thousands separator (dot) and convert decimal comma to decimal point.
   * "12.500,50" → 12500.50
   * "8.900" → 8900
+  * "1.321" → 1321 (NOT 1.32 — no comma means no decimal part)
+  * "3.967" → 3967
   * Use 0 if the price is not printed in the document.
+* **CROSS-VALIDATION MANDATORY**: After extracting each line, verify: UnitPrice × Quantity ≈ Subtotal.
+  * If it does NOT match, you confused the Price column with the Subtotal column — re-read.
+  * Example: Quantity=5.000(→5000), Price=56, Subtotal=280.000(→280000). Check: 56×5000=280000 ✓
+  * If you extracted Price=56.280, check: 56280×5000=281.400.000 ✗ — wrong, the real price is 56.
+  * The Subtotal column is NEVER the price. When two numbers appear adjacent after UN, the FIRST is the price.
 
 **Missing fields**: Use empty string ""
 
@@ -127,9 +141,22 @@ Extract the following from the document:
 
 **DocType**: ALWAYS "dDocument_Items" — fixed constant.
 
-**Quantities**: Whole integers only — 6000 not 6000.00. Remove thousand separators: "6.000" → 6000.
+**NÚMERO FORMAT — ÉXITO USES AMERICAN FORMAT (opposite of Colombian):**
+- **Comma = thousands separator** (e.g., "9,000" = 9000, "2,016,000" = 2016000)
+- **Dot = decimal separator** (e.g., "28.00" = 28, "2,150.00" = 2150)
 
-**UnitPrice**: Decimal number. Colombian format uses "." as thousands separator and "," as decimal separator. Remove thousands separator (dot) and convert decimal comma to decimal point. Example: "12.500,50" → 12500.50. Use 0 if not printed.
+**Quantities**: Whole integers only. Remove comma thousands separator:
+- "9,000" → 9000
+- "3,000" → 3000
+- "12,000" → 12000
+
+**UnitPrice**: Remove comma thousands separator, dot IS the decimal point:
+- "28.00" → 28
+- "2,150.00" → 2150
+- "165.50" → 165.50
+- Use 0 if not printed.
+- **CROSS-VALIDATION MANDATORY**: Verify UnitPrice × Quantity ≈ Subtotal (Valor Base) for each line.
+  If it does NOT match, you confused Price with Subtotal — re-read. The Valor Base/Subtotal column is NEVER the price.
 
 **Missing fields**: Use empty string ""
 
@@ -158,7 +185,8 @@ Before responding, verify:
 - ✅ DocType is exactly "dDocument_Items"
 - ✅ Comments contains verbatim observations from the document (or "" if none)
 - ✅ DocumentLines contains one entry per unique line item with UnitPrice and DeliveryDate
-- ✅ All quantities are whole integers without decimals
+- ✅ All quantities are whole integers without decimals (commas removed: "9,000" → 9000)
+- ✅ UnitPrice uses American format: dot=decimal, comma=thousands ("28.00" → 28, "2,150.00" → 2150)
 - ✅ All DeliveryDate values are in YYYYMMDD format
 - ✅ Valid JSON syntax — no trailing commas, no extra fields
 
@@ -206,9 +234,16 @@ Analyze the provided purchase order document and generate a JSON object followin
 
 **DocType**: Always use the fixed value "dDocument_Items" — no exceptions
 
-**Quantities**: Use whole numbers without decimals (6000 not 6000.00)
+**Quantities**: Use whole numbers without decimals (6000 not 6000.00). Remove thousands separator dot: "1.321" → 1321, "12.718" → 12718.
 
-**UnitPrice**: Decimal number. Colombian format uses "." as thousands separator and "," as decimal separator. Remove thousands separator (dot) and convert decimal comma to decimal point. Example: "12.500,50" → 12500.50. Use 0 if not printed.
+**UnitPrice**: Decimal number. Colombian format: dot = thousands separator (NEVER decimal), comma = decimal separator.
+- **CRITICAL**: dot alone is NEVER decimal. "1.321" → 1321 (NOT 1.32)
+- "165,00" → 165 (comma is decimal separator, so this is 165 pesos exactly)
+- "3.967" → 3967, "8.900" → 8900
+- "12.500,50" → 12500.50 (dot=thousands, comma=decimal)
+- Use 0 if not printed.
+- **CROSS-VALIDATION MANDATORY**: Verify UnitPrice × Quantity ≈ Subtotal for each line.
+  If it does NOT match, you confused Price with Subtotal columns — re-read. The Subtotal is NEVER the price.
 
 **Missing fields**: Use empty string ""
 

@@ -208,7 +208,7 @@ export async function run(): Promise<StepResult> {
         const itemCode = extractItemFromError(errorMsg, lineas);
         if (!itemCode) {
           db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_SAP', error_msg=? WHERE orden_compra=?`)
-            .run(errorMsg.slice(0, 250), oc);
+            .run(errorMsg.slice(0, 1000), oc);
           logPipeline(db, oc, 4, "upload", "ERROR", errorMsg.slice(0, 120));
           result.errores++;
           result.detalles.push(`✗ OC ${oc}: ${errorMsg.slice(0, 120)}`);

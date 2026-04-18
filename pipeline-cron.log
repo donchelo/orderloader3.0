@@ -360,3 +360,39 @@ DB migrada correctamente: /home/ai_tamaprint/Software/orderloader/.data/orderloa
 ✅ Step 6 (notify): 0 processed, 0 errors, 0 skipped (3ms)
 ✅ Step 7 (archive): 0 processed, 0 errors, 34 skipped (79ms)
 Summary: Total Processed: 0, Total Errors: 0
+[2026-04-18T00:00:04.569Z] Starting scheduled pipeline run...
+DB migrada correctamente: /home/ai_tamaprint/Software/orderloader/.data/orderloader.db
+[2026-04-18T00:00:04.786Z] Pipeline finished.
+✅ Step 0 (download): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 1 (parse): 0 processed, 0 errors, 120 skipped (71ms)
+✅ Step 2 (validate-parse): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 3 (sap-query): 0 processed, 0 errors, 0 skipped (0ms)
+✅ Step 4 (upload): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 5 (reconcile): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 6 (notify): 0 processed, 0 errors, 0 skipped (3ms)
+✅ Step 7 (archive): 0 processed, 0 errors, 37 skipped (55ms)
+Summary: Total Processed: 0, Total Errors: 0
+[2026-04-18T01:00:04.891Z] Starting scheduled pipeline run...
+DB migrada correctamente: /home/ai_tamaprint/Software/orderloader/.data/orderloader.db
+[2026-04-18T01:00:05.618Z] Pipeline finished.
+✅ Step 0 (download): 0 processed, 0 errors, 0 skipped (1ms)
+⚠️ Step 1 (parse): 0 processed, 1 errors, 133 skipped (563ms)
+   - ERROR: ⚠ 4500285154.PDF: omitido (max reintentos AI alcanzados)
+   - ERROR: ⚠ 4500286511.PDF: omitido (max reintentos AI alcanzados)
+   - ERROR: ⚠ 4500286518.PDF: omitido (max reintentos AI alcanzados)
+   - ERROR: ⚠ 4500286656.PDF: omitido (max reintentos AI alcanzados)
+   - ERROR: ⚠ 4500285576.PDF: omitido (max reintentos AI alcanzados)
+   - ERROR: ⚠ 4500285587.PDF: omitido (max reintentos AI alcanzados)
+   - ERROR: ⚠ 4500285594.PDF: omitido (max reintentos AI alcanzados)
+   - ERROR: ⚠ 4500285651.PDF: omitido (max reintentos AI alcanzados)
+   - ERROR: Procesando: Comodin/2026-04-18_00:54:59_4500287314/4500287314.PDF
+   - ERROR:   ✗ ANTHROPIC_API_KEY no configurado en .env
+   - ERROR: ⚠ OC4500407817.PDF: omitido (max reintentos AI alcanzados)
+   - ERROR: ⚠ OC4500407881.PDF: omitido (max reintentos AI alcanzados)
+✅ Step 2 (validate-parse): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 3 (sap-query): 0 processed, 0 errors, 0 skipped (2ms)
+✅ Step 4 (upload): 0 processed, 0 errors, 0 skipped (2ms)
+✅ Step 5 (reconcile): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 6 (notify): 0 processed, 0 errors, 0 skipped (1ms)
+✅ Step 7 (archive): 0 processed, 0 errors, 43 skipped (62ms)
+Summary: Total Processed: 0, Total Errors: 1
