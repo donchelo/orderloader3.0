@@ -184,12 +184,6 @@ export async function run(): Promise<StepResult> {
     let docEntry: unknown, docNum: string;
 
     while (lineas.length > 0) {
-      // Agrupar ítems por SupplierCatNum para evitar errores de duplicidad en SAP
-      const groupedLines: Record<string, number> = {};
-      for (const l of lineas) {
-        groupedLines[l.SupplierCatNum] = (groupedLines[l.SupplierCatNum] || 0) + l.Quantity;
-      }
-
       const payload = {
         CardCode:   aiData.CardCode,
         NumAtCard:  aiData.NumAtCard,
@@ -197,9 +191,11 @@ export async function run(): Promise<StepResult> {
         DocDueDate: yyyymmddToIso(maxFechaLineas(lineas, aiData.DocDueDate)),
         TaxDate:    yyyymmddToIso(aiData.TaxDate),
         Comments:   (aiData.Comments ?? "").slice(0, 250), // Truncar a 250 chars para SAP
-        DocumentLines: Object.entries(groupedLines).map(([catNum, qty]) => ({
-          SupplierCatNum: catNum,
-          Quantity: qty
+        DocumentLines: lineas.map(l => ({
+          SupplierCatNum: l.SupplierCatNum,
+          Quantity: l.Quantity,
+          FreeText: l.FreeText,
+          ShipDate: yyyymmddToIso(l.DeliveryDate ?? aiData.DocDueDate),
         })),
       };
 

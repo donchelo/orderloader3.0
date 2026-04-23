@@ -8,6 +8,7 @@ export const DocumentLineSchema = z.object({
   Quantity: z.number().positive("La cantidad debe ser positiva"),
   UnitPrice: z.number().nonnegative("El precio unitario no puede ser negativo").optional(),
   DeliveryDate: z.string().regex(/^\d{8}$/, "La fecha de entrega debe tener formato YYYYMMDD").optional(),
+  FreeText: z.string().optional(),
 });
 
 /**

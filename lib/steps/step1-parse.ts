@@ -93,13 +93,14 @@ function insertSapOrder(
   const ins = db.prepare(`
     INSERT INTO pedidos_detalle
       (orden_compra, codigo_producto, descripcion, cantidad, precio_unitario, subtotal_item, fecha_entrega)
-    VALUES (?, ?, '', ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
   for (const line of order.DocumentLines) {
     const precio = line.UnitPrice ?? 0;
     const subtotal = precio * line.Quantity;
     const fechaLinea = line.DeliveryDate ? yyyymmddToIso(line.DeliveryDate) : fechaG;
-    ins.run(order.NumAtCard, line.SupplierCatNum, line.Quantity, precio, subtotal, fechaLinea);
+    const desc = line.FreeText ?? "";
+    ins.run(order.NumAtCard, line.SupplierCatNum, desc, line.Quantity, precio, subtotal, fechaLinea);
   }
 }
 

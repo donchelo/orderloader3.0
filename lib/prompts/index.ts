@@ -23,10 +23,11 @@ Analyze the provided purchase order document and generate a JSON object that fai
   * Document date (DocDate) → Today's date at time of processing (NOT from the document)
   * Tax date (TaxDate) → Corresponds to the "fecha de elaboración" or document date printed on the PDF
   * Observations / remarks (Comments) → Copy verbatim any text found in an "Observaciones", "Remarks", "Notas", or similar section of the document. Use empty string "" if none found.
-* **Individual items**: For each product extract:
+* **Individual items**: For each product extract in the SAME ORDER as they appear in the PDF:
   * Product code/reference (SupplierCatNum) — **remove any leading zeros** (e.g., "014007383001" → "14007383001")
   * Requested quantity (Quantity)
   * Unit price (UnitPrice) — the price per unit as printed in the document
+  * Line notes (FreeText) — copy verbatim any descriptive text or special instructions specific to this line (e.g., color, size, variations). Use "" if none found.
   * Line delivery date (DeliveryDate) — the specific delivery date for this line if printed. If the line has no individual date, use the general order delivery date (DocDueDate). Always in YYYYMMDD format.
 
 ### 3. DATA TRANSFORMATION
@@ -75,7 +76,7 @@ Apply these mandatory conversion rules:
 
 ### 5. FINAL VALIDATION
 Before generating the response, verify:
-* Item count in DocumentLines matches exactly with initial count
+* Item count and ORDER in DocumentLines matches exactly with the document (DO NOT sum or group identical items, keep them as separate lines if they are separate in the PDF)
 * All required fields are present
 * Date formats are correct (YYYYMMDD)
 * DocDate is today's date at time of processing (NOT from the document)
@@ -83,6 +84,7 @@ Before generating the response, verify:
 * DocType is "dDocument_Items"
 * Quantities correctly reflect thousands (e.g., "126.000" → 126000)
 * UnitPrice is a decimal number per item (0 if not present in document)
+* FreeText contains the verbatim line notes (or "" if none)
 * DeliveryDate is present on every line in YYYYMMDD format (line-specific date or DocDueDate if not specified per line)
 * Comments contains the verbatim observations from the document (or "" if none)
 * Valid JSON syntax (no trailing commas, proper brackets)

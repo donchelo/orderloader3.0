@@ -169,8 +169,8 @@ function buildPreciosHtml(db: Database.Database, rows: Array<Record<string, unkn
   const secciones = relevantes.map(row => {
     const excluidos = parseExcluidos(row);
     const todasLineas = db.prepare(
-      "SELECT codigo_producto, cantidad, precio_unitario, subtotal_item FROM pedidos_detalle WHERE orden_compra = ? ORDER BY id"
-    ).all(row.orden_compra) as Array<{ codigo_producto: string; cantidad: number; precio_unitario: number; subtotal_item: number }>;
+      "SELECT codigo_producto, descripcion, cantidad, precio_unitario, subtotal_item FROM pedidos_detalle WHERE orden_compra = ? ORDER BY id"
+    ).all(row.orden_compra) as Array<{ codigo_producto: string; descripcion: string; cantidad: number; precio_unitario: number; subtotal_item: number }>;
     const lineas = excluidos.length
       ? todasLineas.filter(l => !excluidos.includes(l.codigo_producto))
       : todasLineas;
@@ -194,6 +194,7 @@ function buildPreciosHtml(db: Database.Database, rows: Array<Record<string, unkn
 
       return `<tr style="background:${rowBg}">
         <td style="padding:6px 12px;font-family:monospace,${FONT};font-size:11px;color:${B.erieBlack}">${l.codigo_producto}</td>
+        <td style="padding:6px 12px;font-family:${FONT};font-size:11px;color:${B.cadetGray}">${l.descripcion}</td>
         <td style="padding:6px 12px;text-align:right;font-family:${FONT};font-size:12px">${l.cantidad}</td>
         <td style="padding:6px 12px;text-align:right;font-family:${FONT};font-size:12px">${fmtCOP(l.precio_unitario)}</td>
         <td style="padding:6px 12px;text-align:right;font-family:${FONT};font-size:12px">${fmtCOP(sapPrice)}</td>
@@ -217,7 +218,7 @@ function buildPreciosHtml(db: Database.Database, rows: Array<Record<string, unkn
               <span style="font-family:${FONT};font-size:13px;font-weight:700;color:${headerText}">${ocLabel}</span>
             </td>
           </tr>
-          ${theadRow("Artículo", "Cant.", "Precio PDF", "Precio SAP", "Subtotal PDF", "").replace("<thead>", "").replace("</thead>", "")}
+          ${theadRow("Artículo", "Descripción/Notas", "Cant.", "Precio PDF", "Precio SAP", "Subtotal PDF", "").replace("<thead>", "").replace("</thead>", "")}
         </thead>
         <tbody>${filas}</tbody>
       </table>
