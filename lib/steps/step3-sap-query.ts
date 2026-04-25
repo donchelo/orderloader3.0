@@ -1,14 +1,19 @@
 /**
- * Step 3: Verificar si OC existe en SAP B1.
+ * Step 3: Verificar existencia de artículos en el catálogo de SAP B1.
  *
- * PARSE_VALIDO → SAP_NUEVO | ERROR_DUPLICADO
+ * Consulta AlternateCatNum para cada SupplierCatNum del pedido.
+ * Artículos que no existen en el catálogo se excluyen del pedido y se
+ * guardan en items_excluidos para que step4 los omita al subir.
+ * Si ningún artículo existe → ERROR_CATALOG (no se puede subir nada).
+ *
+ * PARSE_VALIDO → CATALOG_OK | ERROR_CATALOG
  */
 
 import fs from "fs";
 import path from "path";
 import { getDb, logPipeline } from "../db";
-import { sendAlertEmail } from "../mailer";
 import { getSapClient, clearSapClient } from "../sap-client";
+import type { SapB1Client } from "../sap-client";
 import type { SapB1Order } from "./step1-parse";
 
 export interface StepResult {
@@ -18,6 +23,33 @@ export interface StepResult {
   detalles: string[];
 }
 
+/** Consulta AlternateCatNum y mapea SupplierCatNum → ItemCode de SAP. */
+async function fetchCatNumMappings(
+  sap: SapB1Client,
+  cardCode: string,
+  catNums: string[]
+): Promise<Map<string, string>> {
+  const mapping = new Map<string, string>();
+  await Promise.all(
+    catNums.map(async (catNum) => {
+      try {
+        const escapedCard = cardCode.replace(/'/g, "''");
+        const escapedCat  = catNum.replace(/'/g, "''");
+        const res = await sap.get<{ value: Array<{ ItemCode: string }> }>("AlternateCatNum", {
+          "$filter": `CardCode eq '${escapedCard}' and Substitute eq '${escapedCat}'`,
+          "$select": "ItemCode",
+          "$top": "1",
+        });
+        if (res.value?.length > 0) {
+          mapping.set(catNum, res.value[0].ItemCode);
+        }
+      } catch {
+        // Fallo silencioso: artículo no se agrega al mapa → será excluido
+      }
+    })
+  );
+  return mapping;
+}
 
 export async function run(): Promise<StepResult> {
   const result: StepResult = { procesados: 0, errores: 0, saltados: 0, detalles: [] };
@@ -43,73 +75,83 @@ export async function run(): Promise<StepResult> {
 
   for (const row of pendientes) {
     const oc = String(row.orden_compra);
-    const cliente = String(row.cliente_nombre || "—");
     const now = new Date().toISOString();
-    const fecha = new Date().toISOString().split("T")[0];
 
-    // Leer CardCode desde data_extraida.json para filtrar por clave real (CardCode + NumAtCard)
+    // Cargar data_extraida.json
     const carpeta = row.carpeta_origen as string | null;
     const markerPath = carpeta ? path.join(carpeta, "data_extraida.json") : null;
     if (!markerPath || !fs.existsSync(markerPath)) {
-      db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_SAP', error_msg=? WHERE orden_compra=?`)
-        .run("data_extraida.json no encontrado en step3", oc);
-      logPipeline(db, oc, 3, "sap_query", "ERROR", "data_extraida.json no encontrado");
+      const msg = "data_extraida.json no encontrado en step3";
+      db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_CATALOG', error_msg=? WHERE orden_compra=?`).run(msg, oc);
+      logPipeline(db, oc, 3, "sap_catalog", "ERROR", msg);
       result.errores++;
-      result.detalles.push(`✗ OC ${oc}: data_extraida.json no encontrado`);
+      result.detalles.push(`✗ OC ${oc}: ${msg}`);
       continue;
     }
-    const aiData = JSON.parse(fs.readFileSync(markerPath, "utf8")) as SapB1Order;
-    const cardCode = aiData.CardCode;
+
+    let aiData: SapB1Order;
+    try {
+      aiData = JSON.parse(fs.readFileSync(markerPath, "utf8")) as SapB1Order;
+    } catch (e) {
+      const msg = `data_extraida.json inválido: ${String(e).slice(0, 80)}`;
+      db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_CATALOG', error_msg=? WHERE orden_compra=?`).run(msg, oc);
+      logPipeline(db, oc, 3, "sap_catalog", "ERROR", msg);
+      result.errores++;
+      result.detalles.push(`✗ OC ${oc}: ${msg}`);
+      continue;
+    }
 
     try {
-      const res = await sap.get<{ value: Array<Record<string, unknown>> }>(
-        "Orders",
-        { "$filter": `NumAtCard eq '${oc}' and CardCode eq '${cardCode}'`, "$select": "DocEntry,DocNum,DocTotal,CardCode" }
-      );
-      const valor = res.value ?? [];
+      const allCatNums = [...new Set(aiData.DocumentLines.map(l => l.SupplierCatNum))];
+      const itemMappings = await fetchCatNumMappings(sap, aiData.CardCode, allCatNums);
 
-      if (valor.length) {
-        const doc = valor[0];
-        const errorMsg = `OC duplicada en SAP para ${cardCode}: DocEntry=${doc.DocEntry}, DocNum=${doc.DocNum}`;
-        db.prepare(`
-          UPDATE pedidos_maestro SET
-            estado='ERROR_DUPLICADO', sap_existe=1, sap_doc_entry=?, sap_doc_num=?,
-            sap_query_resultado=?, ts_sap_query=?, fase_actual=2, error_msg=?
-          WHERE orden_compra=?
-        `).run(doc.DocEntry, String(doc.DocNum), JSON.stringify(doc), now, errorMsg, oc);
-        logPipeline(db, oc, 3, "sap_query", "ERROR", `Duplicado: DocEntry=${doc.DocEntry}`);
-        result.errores++;
-        result.detalles.push(`✗ OC ${oc} → ERROR_DUPLICADO (DocEntry ${doc.DocEntry})`);
+      const missing = aiData.DocumentLines.filter(l => !itemMappings.has(l.SupplierCatNum));
+      const present = aiData.DocumentLines.filter(l =>  itemMappings.has(l.SupplierCatNum));
 
-        const html = `<html><body style="font-family:Arial,sans-serif"><div style="background:#dc3545;color:white;padding:14px 20px">
-          <h2>OC Duplicada en SAP B1</h2></div>
-          <div style="padding:16px"><table>
-            <tr><td><b>OC:</b></td><td>${oc}</td></tr>
-            <tr><td><b>Cliente:</b></td><td>${cliente}</td></tr>
-            <tr><td><b>DocEntry SAP:</b></td><td>${doc.DocEntry}</td></tr>
-            <tr><td><b>DocNum SAP:</b></td><td>${doc.DocNum}</td></tr>
-          </table>
-          <p>La OC fue marcada como <b>ERROR_DUPLICADO</b> y no se subirá a SAP.</p>
-          </div></body></html>`;
-        try {
-          await sendAlertEmail(`[ERROR OrderLoader] OC ${oc} — Duplicada en SAP B1`, html);
-        } catch { /* ignore */ }
-      } else {
-        db.prepare(`
-          UPDATE pedidos_maestro SET
-            estado='SAP_NUEVO', sap_existe=0, sap_query_resultado='[]', ts_sap_query=?, fase_actual=2
-          WHERE orden_compra=?
-        `).run(now, oc);
-        logPipeline(db, oc, 3, "sap_query", "OK", "No existe en SAP → SAP_NUEVO");
-        result.procesados++;
-        result.detalles.push(`✓ OC ${oc} → SAP_NUEVO`);
+      for (const m of missing) {
+        logPipeline(db, oc, 3, "sap_catalog", "WARN",
+          `Artículo ${m.SupplierCatNum} no existe en AlternateCatNum — excluido`);
+        result.detalles.push(`  ⚠ OC ${oc}: artículo ${m.SupplierCatNum} no existe en catálogo SAP — excluido`);
       }
+
+      if (present.length === 0) {
+        const missingList = missing.map(l => l.SupplierCatNum).join(", ");
+        const msg = `Ningún artículo existe en catálogo SAP: ${missingList}`;
+        db.prepare(`
+          UPDATE pedidos_maestro SET estado='ERROR_CATALOG', error_msg=?, items_excluidos=?, fase_actual=3
+          WHERE orden_compra=?
+        `).run(msg.slice(0, 250), JSON.stringify(missing.map(l => l.SupplierCatNum)), oc);
+        logPipeline(db, oc, 3, "sap_catalog", "ERROR", msg.slice(0, 120));
+        result.errores++;
+        result.detalles.push(`✗ OC ${oc} → ERROR_CATALOG: ${msg}`);
+        continue;
+      }
+
+      // Algunos o todos los artículos existen → CATALOG_OK
+      const excludedNames = missing.map(l => l.SupplierCatNum);
+      db.prepare(`
+        UPDATE pedidos_maestro SET
+          estado='CATALOG_OK', fase_actual=3, ts_sap_query=?,
+          items_excluidos=?, error_msg=NULL
+        WHERE orden_compra=?
+      `).run(
+        now,
+        excludedNames.length ? JSON.stringify(excludedNames) : null,
+        oc
+      );
+
+      const excMsg = missing.length ? ` — ${missing.length} artículo(s) excluido(s) del catálogo` : "";
+      logPipeline(db, oc, 3, "sap_catalog", "OK",
+        `${present.length} artículo(s) en catálogo${excMsg}`);
+      result.procesados++;
+      result.detalles.push(`✓ OC ${oc} → CATALOG_OK (${present.length}/${allCatNums.length} artículos)${excMsg}`);
+
     } catch (e) {
-      db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_SAP', error_msg=? WHERE orden_compra=?`)
-        .run(String(e), oc);
-      logPipeline(db, oc, 3, "sap_query", "ERROR", String(e).slice(0, 120));
+      db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_CATALOG', error_msg=? WHERE orden_compra=?`)
+        .run(String(e).slice(0, 250), oc);
+      logPipeline(db, oc, 3, "sap_catalog", "ERROR", String(e).slice(0, 120));
       result.errores++;
-      result.detalles.push(`✗ OC ${oc}: ${String(e)}`);
+      result.detalles.push(`✗ OC ${oc}: ${String(e).slice(0, 120)}`);
     }
   }
 

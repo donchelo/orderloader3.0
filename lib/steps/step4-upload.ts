@@ -1,18 +1,18 @@
 /**
- * Step 4: Verificar ítems y crear Sales Order en SAP B1.
+ * Step 4: Crear Sales Order en SAP B1.
  *
- * Primero valida que existan ítems en pedidos_detalle.
- * Luego sube la orden a SAP con lógica de retry: si SAP rechaza un artículo
- * específico lo excluye y reintenta con los restantes.
+ * Lee los artículos excluidos del catálogo (puestos por step3) y sube
+ * solo los artículos válidos. Si SAP rechaza un artículo durante el upload,
+ * lo excluye y reintenta con los restantes.
  *
- * SAP_NUEVO → SAP_MONTADO | ERROR_ITEMS | ERROR_SAP
+ * CATALOG_OK → SAP_MONTADO | ERROR_ITEMS | ERROR_SAP
+ * SAP_NUEVO  → SAP_MONTADO | ERROR_ITEMS | ERROR_SAP  (compatibilidad backward)
  */
 
 import fs from "fs";
 import path from "path";
 import { getDb, logPipeline } from "../db";
 import { getSapClient, clearSapClient } from "../sap-client";
-import type { SapB1Client } from "../sap-client";
 import type { SapB1Order } from "./step1-parse";
 
 export interface StepResult {
@@ -32,23 +32,15 @@ function maxFechaLineas(lines: { DeliveryDate?: string }[], fallback: string): s
   return fechas.length ? fechas.reduce((max, f) => (f > max ? f : max), fechas[0]) : fallback;
 }
 
-/** Intenta identificar qué SupplierCatNum causó el error SAP.
- *  SAP B1 suele incluir el código del artículo (ItemCode o SupplierCatNum) o un índice de fila. */
+/** Intenta identificar qué SupplierCatNum causó el error SAP. */
 function extractItemFromError(
   errorMsg: string,
-  lines: Array<{ SupplierCatNum: string }>,
-  mapping: Map<string, string>
+  lines: Array<{ SupplierCatNum: string }>
 ): string | null {
   for (const line of lines) {
-    // 1. Buscar por el código del cliente (SupplierCatNum)
     if (errorMsg.includes(line.SupplierCatNum)) return line.SupplierCatNum;
-
-    // 2. Buscar por el código interno de SAP (ItemCode) usando el mapa
-    const sapCode = mapping.get(line.SupplierCatNum);
-    if (sapCode && errorMsg.includes(sapCode)) return line.SupplierCatNum;
   }
-
-  // 3. Fallback: buscar por índice de fila [Row X]
+  // Fallback: buscar por índice de fila [Row X]
   const rowMatch = errorMsg.match(/[Rr]ow\s*\[?(\d+)\]?/);
   if (rowMatch) {
     const idx = parseInt(rowMatch[1]);
@@ -57,45 +49,17 @@ function extractItemFromError(
   return null;
 }
 
-/** Consulta AlternateCatNum para determinar qué SupplierCatNums existen
- *  y mapearlos a sus ItemCodes de SAP. */
-async function fetchCatNumMappings(
-  sap: SapB1Client,
-  cardCode: string,
-  catNums: string[]
-): Promise<Map<string, string>> {
-  const mapping = new Map<string, string>();
-  await Promise.all(
-    catNums.map(async (catNum) => {
-      try {
-        const escapedCard = cardCode.replace(/'/g, "''");
-        const escapedCat  = catNum.replace(/'/g, "''");
-        const res = await sap.get<{ value: Array<{ ItemCode: string }> }>("AlternateCatNum", {
-          "$filter": `CardCode eq '${escapedCard}' and Substitute eq '${escapedCat}'`,
-          "$select": "ItemCode",
-          "$top": "1",
-        });
-        if (res.value?.length > 0) {
-          mapping.set(catNum, res.value[0].ItemCode);
-        }
-      } catch {
-        // Silencioso: si falla la consulta no agregamos al mapa
-      }
-    })
-  );
-  return mapping;
-}
-
 export async function run(): Promise<StepResult> {
   const result: StepResult = { procesados: 0, errores: 0, saltados: 0, detalles: [] };
   const db = getDb();
 
+  // Procesar CATALOG_OK (nuevo flujo) y SAP_NUEVO (compatibilidad con runs anteriores)
   const pendientes = db.prepare(
-    "SELECT * FROM pedidos_maestro WHERE estado = 'SAP_NUEVO'"
+    "SELECT * FROM pedidos_maestro WHERE estado IN ('CATALOG_OK', 'SAP_NUEVO')"
   ).all() as Array<Record<string, unknown>>;
 
   if (!pendientes.length) {
-    result.detalles.push("No hay pedidos en estado SAP_NUEVO");
+    result.detalles.push("No hay pedidos en estado CATALOG_OK o SAP_NUEVO");
     return result;
   }
 
@@ -152,8 +116,6 @@ export async function run(): Promise<StepResult> {
     }
 
     // ── Verificación de idempotencia: ¿ya fue subida a SAP en un run anterior? ─
-    // Si el proceso se cayó después del POST pero antes de actualizar la DB,
-    // la orden existe en SAP pero el estado sigue siendo SAP_NUEVO. Detectar y recuperar.
     try {
       const check = await sap.get<{ value: Array<Record<string, unknown>> }>(
         "Orders",
@@ -177,31 +139,23 @@ export async function run(): Promise<StepResult> {
       // Si la verificación falla, continuar con el flujo normal de upload
     }
 
-    // ── Pre-validar artículos contra AlternateCatNum antes de subir ──────────
-    let lineas = aiData.DocumentLines.map(l => ({ ...l }));
-    const excluidos: typeof lineas = [];
+    // ── Leer artículos excluidos por step3 (catálogo) ───────────────────────
+    const catalogExcluded: string[] = JSON.parse(String(row.items_excluidos || "[]"));
 
-    const allCatNums = [...new Set(lineas.map(l => l.SupplierCatNum))];
-    const itemMappings = await fetchCatNumMappings(sap, aiData.CardCode, allCatNums);
-    
-    const missing = lineas.filter(l => !itemMappings.has(l.SupplierCatNum));
-    if (missing.length > 0) {
-      excluidos.push(...missing);
-      lineas = lineas.filter(l => itemMappings.has(l.SupplierCatNum));
-      for (const m of missing) {
-        logPipeline(db, oc, 4, "upload", "WARN",
-          `Artículo ${m.SupplierCatNum} no existe en AlternateCatNum de SAP — excluido`);
-        result.detalles.push(`  ⚠ OC ${oc}: artículo ${m.SupplierCatNum} no existe en SAP — excluido`);
-      }
-    }
+    let lineas = aiData.DocumentLines
+      .filter(l => !catalogExcluded.includes(l.SupplierCatNum))
+      .map(l => ({ ...l }));
+    const excluidos = aiData.DocumentLines
+      .filter(l => catalogExcluded.includes(l.SupplierCatNum))
+      .map(l => ({ ...l }));
 
     if (lineas.length === 0) {
-      const msg = `Todos los artículos fueron rechazados (no existen en SAP): ${excluidos.map(l => l.SupplierCatNum).join(", ")}`;
-      db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_SAP', error_msg=?, items_excluidos=? WHERE orden_compra=?`)
-        .run(msg.slice(0, 250), JSON.stringify(excluidos.map(l => l.SupplierCatNum)), oc);
+      const msg = `Todos los artículos excluidos por catálogo: ${catalogExcluded.join(", ")}`;
+      db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_ITEMS', error_msg=? WHERE orden_compra=?`)
+        .run(msg.slice(0, 250), oc);
       logPipeline(db, oc, 4, "upload", "ERROR", msg.slice(0, 120));
       result.errores++;
-      result.detalles.push(`✗ OC ${oc}: ${msg}`);
+      result.detalles.push(`✗ OC ${oc} → ERROR_ITEMS: ${msg}`);
       continue;
     }
 
@@ -216,7 +170,7 @@ export async function run(): Promise<StepResult> {
         DocDate:    yyyymmddToIso(aiData.DocDate),
         DocDueDate: yyyymmddToIso(maxFechaLineas(lineas, aiData.DocDueDate)),
         TaxDate:    yyyymmddToIso(aiData.TaxDate),
-        Comments:   (aiData.Comments ?? "").slice(0, 250), // Truncar a 250 chars para SAP
+        Comments:   (aiData.Comments ?? "").slice(0, 250),
         DocumentLines: lineas.map(l => ({
           SupplierCatNum: l.SupplierCatNum,
           Quantity: l.Quantity,
@@ -233,7 +187,7 @@ export async function run(): Promise<StepResult> {
         break;
       } catch (e) {
         const errorMsg = String(e);
-        const itemCode = extractItemFromError(errorMsg, lineas, itemMappings);
+        const itemCode = extractItemFromError(errorMsg, lineas);
         if (!itemCode) {
           db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_SAP', error_msg=? WHERE orden_compra=?`)
             .run(errorMsg.slice(0, 1000), oc);
@@ -246,7 +200,7 @@ export async function run(): Promise<StepResult> {
         excluidos.push(...lineas.splice(idx, 1));
         logPipeline(db, oc, 4, "upload", "WARN",
           `Artículo ${itemCode} excluido por error SAP — reintentando`);
-        result.detalles.push(`  ⚠ OC ${oc}: artículo ${itemCode} excluido — reintentando`);
+        result.detalles.push(`  ⚠ OC ${oc}: artículo ${itemCode} excluido por SAP — reintentando`);
       }
     }
 
@@ -262,6 +216,9 @@ export async function run(): Promise<StepResult> {
       continue;
     }
 
+    // Todos los excluidos: catálogo (step3) + rechazados por SAP (retry loop)
+    const allExcluded = excluidos.map(l => l.SupplierCatNum);
+
     db.prepare(`
       UPDATE pedidos_maestro SET
         estado='SAP_MONTADO', sap_doc_entry=?, sap_doc_num=?,
@@ -270,11 +227,11 @@ export async function run(): Promise<StepResult> {
       WHERE orden_compra=?
     `).run(
       docEntry, docNum!, now,
-      excluidos.length ? JSON.stringify(excluidos.map(l => l.SupplierCatNum)) : null,
+      allExcluded.length ? JSON.stringify(allExcluded) : null,
       oc
     );
 
-    const excMsg = excluidos.length ? ` — ${excluidos.length} artículo(s) excluido(s)` : "";
+    const excMsg = allExcluded.length ? ` — ${allExcluded.length} artículo(s) excluido(s)` : "";
     logPipeline(db, oc, 4, "upload", "OK", `DocEntry=${docEntry} DocNum=${docNum!}${excMsg}`);
     result.procesados++;
     result.detalles.push(`✓ OC ${oc} → SAP_MONTADO (DocEntry ${docEntry})${excMsg}`);

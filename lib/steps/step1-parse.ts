@@ -178,7 +178,8 @@ export async function run(): Promise<StepResult> {
   const ESTADOS_EN_PROCESO = new Set([
     "PARSED",
     "PARSE_VALIDO",
-    "SAP_NUEVO",
+    "SAP_NUEVO",     // backward compat con órdenes anteriores a la restructuración
+    "CATALOG_OK",    // step3 completado, esperando upload
     "SAP_MONTADO",
     "VALIDADO",
     "NOTIFICANDO",

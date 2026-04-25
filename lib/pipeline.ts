@@ -38,14 +38,14 @@ export function isPipelineRunning(): boolean { return _running; }
 export function requestPipelineStop(): void  { _stopRequested = true; }
 
 const STEPS = [
-  { n: 0, name: "download",       fn: step0 },
-  { n: 1, name: "parse",          fn: step1 },
-  { n: 2, name: "validate-parse", fn: step2 },
-  { n: 3, name: "sap-query",      fn: step3 },
-  { n: 4, name: "upload",          fn: step4 },
-  { n: 5, name: "reconcile",      fn: step5 },
-  { n: 6, name: "notify",         fn: step6 },
-  { n: 7, name: "archive",        fn: step7 },
+  { n: 0, name: "download",     fn: step0 },
+  { n: 1, name: "parse",        fn: step1 },
+  { n: 2, name: "validate",     fn: step2 },
+  { n: 3, name: "sap-catalog",  fn: step3 },
+  { n: 4, name: "upload",       fn: step4 },
+  { n: 5, name: "reconcile",    fn: step5 },
+  { n: 6, name: "notify",       fn: step6 },
+  { n: 7, name: "archive",      fn: step7 },
 ];
 
 async function runSteps(stepsToRun: typeof STEPS, onStep?: PipelineOptions["onStep"]): Promise<StepResult[]> {

@@ -1,16 +1,17 @@
 /**
- * Step 2: Validar el JSON SAP B1 extraído por el AI.
+ * Step 2: Validar el JSON SAP B1 extraído y verificar que no sea duplicado en SAP.
  *
- * Verifica formato, campos requeridos, SupplierCatNum sin ceros iniciales,
- * cantidades enteras positivas y ausencia de duplicados.
+ * 1. Valida formato y reglas de negocio del JSON extraído por el AI.
+ * 2. Consulta SAP B1 para detectar órdenes duplicadas.
  *
- * PARSED → PARSE_VALIDO | ERROR_PARSE
+ * PARSED → PARSE_VALIDO | ERROR_PARSE | ERROR_DUPLICADO
  */
 
 import fs from "fs";
 import path from "path";
 import { getDb, logPipeline } from "../db";
 import { sendAlertEmail } from "../mailer";
+import { getSapClient, clearSapClient } from "../sap-client";
 import type { SapB1Order } from "./step1-parse";
 
 export interface StepResult {
@@ -20,7 +21,7 @@ export interface StepResult {
   detalles: string[];
 }
 
-// ── Validaciones ────────────────────────────────────────────────────────────
+// ── Validaciones de formato ──────────────────────────────────────────────────
 
 export function validarSapB1Json(order: SapB1Order, clienteNombre: string): string[] {
   const errores: string[] = [];
@@ -42,8 +43,6 @@ export function validarSapB1Json(order: SapB1Order, clienteNombre: string): stri
     if (!/^\d{8}$/.test(valor ?? "")) {
       errores.push(`${campo} inválido: '${valor}' (formato esperado YYYYMMDD)`);
     } else {
-      // Usar constructor numérico y comparar componentes para detectar overflow
-      // (ej. "20240230" → new Date("2024-02-30") devuelve March 1 sin error)
       const y = parseInt(valor.slice(0, 4));
       const m = parseInt(valor.slice(4, 6)) - 1;
       const d = parseInt(valor.slice(6, 8));
@@ -64,7 +63,7 @@ export function validarSapB1Json(order: SapB1Order, clienteNombre: string): stri
     const line = order.DocumentLines[i];
     const ref = `Línea ${i + 1}`;
 
-    // SupplierCatNum: no vacío; sin cero inicial solo para Comodin
+    // SupplierCatNum: no vacío; sin cero inicial solo para ciertos clientes
     if (!line.SupplierCatNum?.trim()) {
       errores.push(`${ref}: SupplierCatNum vacío`);
     } else {
@@ -116,18 +115,31 @@ export async function run(): Promise<StepResult> {
     return result;
   }
 
+  // Intentar conexión SAP para verificación de duplicados.
+  // Si SAP no está disponible, se valida solo el formato y se deja en PARSE_VALIDO
+  // para que step3 lo procese cuando SAP vuelva.
+  let sap: Awaited<ReturnType<typeof getSapClient>> | null = null;
+  try {
+    sap = await getSapClient();
+  } catch {
+    result.detalles.push("⚠ SAP no disponible — solo se validará formato; verificación de duplicados diferida a step3");
+    clearSapClient();
+  }
+
+  const now = new Date().toISOString();
+
   for (const row of pendientes) {
     const oc = String(row.orden_compra);
     const cliente = String(row.cliente_nombre || "—");
 
-    // Cargar data_extraida.json
+    // ── 1. Cargar data_extraida.json ─────────────────────────────────────────
     const carpeta = row.carpeta_origen as string | null;
     const markerPath = carpeta ? path.join(carpeta, "data_extraida.json") : null;
 
     if (!markerPath || !fs.existsSync(markerPath)) {
       db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_PARSE', error_msg=? WHERE orden_compra=?`)
         .run("data_extraida.json no encontrado", oc);
-      logPipeline(db, oc, 2, "validate_parsed", "ERROR", "data_extraida.json no encontrado");
+      logPipeline(db, oc, 2, "validate", "ERROR", "data_extraida.json no encontrado");
       result.errores++;
       result.detalles.push(`✗ OC ${oc} → ERROR_PARSE: data_extraida.json no encontrado`);
       continue;
@@ -139,33 +151,97 @@ export async function run(): Promise<StepResult> {
     } catch (e) {
       db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_PARSE', error_msg=? WHERE orden_compra=?`)
         .run(`data_extraida.json no es JSON válido: ${String(e).slice(0, 80)}`, oc);
-      logPipeline(db, oc, 2, "validate_parsed", "ERROR", "JSON inválido");
+      logPipeline(db, oc, 2, "validate", "ERROR", "JSON inválido");
       result.errores++;
       result.detalles.push(`✗ OC ${oc} → ERROR_PARSE: JSON inválido`);
       continue;
     }
 
-    const errores = validarSapB1Json(order, cliente);
+    // ── 2. Validación de formato ─────────────────────────────────────────────
+    const erroresFormato = validarSapB1Json(order, cliente);
     const n = order.DocumentLines?.length ?? 0;
-    const resultado = JSON.stringify({ errores, n_items: n });
 
-    if (errores.length) {
+    if (erroresFormato.length) {
+      const resultado = JSON.stringify({ errores: erroresFormato, n_items: n });
       db.prepare(`
         UPDATE pedidos_maestro SET estado='ERROR_PARSE', fase_actual=2, error_msg=?, validacion_resultado=?
         WHERE orden_compra=?
-      `).run(`${errores.length} error(es): ${errores[0].slice(0, 80)}`, resultado, oc);
-      logPipeline(db, oc, 2, "validate_parsed", "ERROR", errores[0].slice(0, 120));
+      `).run(`${erroresFormato.length} error(es): ${erroresFormato[0].slice(0, 80)}`, resultado, oc);
+      logPipeline(db, oc, 2, "validate", "ERROR", erroresFormato[0].slice(0, 120));
       result.errores++;
-      result.detalles.push(`✗ OC ${oc} → ERROR_PARSE: ${errores[0]}`);
-      try { await sendAlertEmail(`[ERROR OrderLoader] OC ${oc} — Validación fallida`, buildErrorHtml(oc, cliente, errores)); } catch { /* ignore */ }
-    } else {
+      result.detalles.push(`✗ OC ${oc} → ERROR_PARSE: ${erroresFormato[0]}`);
+      try { await sendAlertEmail(`[ERROR OrderLoader] OC ${oc} — Validación fallida`, buildErrorHtml(oc, cliente, erroresFormato)); } catch { /* ignore */ }
+      continue;
+    }
+
+    // ── 3. Verificar duplicado en SAP ────────────────────────────────────────
+    if (!sap) {
+      // SAP no disponible: validación de formato OK, diferir check de duplicados
+      const resultado = JSON.stringify({ errores: [], n_items: n });
       db.prepare(`
         UPDATE pedidos_maestro SET estado='PARSE_VALIDO', fase_actual=2, error_msg=NULL, validacion_resultado=?
         WHERE orden_compra=?
       `).run(resultado, oc);
-      logPipeline(db, oc, 2, "validate_parsed", "OK", `${n} ítem(s) OK`);
+      logPipeline(db, oc, 2, "validate", "OK", `${n} ítem(s) OK — SAP sin check (no disponible)`);
       result.procesados++;
-      result.detalles.push(`✓ OC ${oc} → PARSE_VALIDO (${n} ítems)`);
+      result.detalles.push(`✓ OC ${oc} → PARSE_VALIDO (${n} ítems, sin check SAP)`);
+      continue;
+    }
+
+    try {
+      const res = await sap.get<{ value: Array<Record<string, unknown>> }>(
+        "Orders",
+        { "$filter": `NumAtCard eq '${oc}' and CardCode eq '${order.CardCode}'`, "$select": "DocEntry,DocNum,DocTotal,CardCode" }
+      );
+      const encontrados = res.value ?? [];
+
+      if (encontrados.length) {
+        const doc = encontrados[0];
+        const errorMsg = `OC duplicada en SAP para ${order.CardCode}: DocEntry=${doc.DocEntry}, DocNum=${doc.DocNum}`;
+        db.prepare(`
+          UPDATE pedidos_maestro SET
+            estado='ERROR_DUPLICADO', sap_existe=1, sap_doc_entry=?, sap_doc_num=?,
+            sap_query_resultado=?, ts_sap_query=?, fase_actual=2, error_msg=?
+          WHERE orden_compra=?
+        `).run(doc.DocEntry, String(doc.DocNum), JSON.stringify(doc), now, errorMsg, oc);
+        logPipeline(db, oc, 2, "validate", "ERROR", `Duplicado: DocEntry=${doc.DocEntry}`);
+        result.errores++;
+        result.detalles.push(`✗ OC ${oc} → ERROR_DUPLICADO (DocEntry ${doc.DocEntry})`);
+
+        const html = `<html><body style="font-family:Arial,sans-serif"><div style="background:#dc3545;color:white;padding:14px 20px">
+          <h2>OC Duplicada en SAP B1</h2></div>
+          <div style="padding:16px"><table>
+            <tr><td><b>OC:</b></td><td>${oc}</td></tr>
+            <tr><td><b>Cliente:</b></td><td>${cliente}</td></tr>
+            <tr><td><b>DocEntry SAP:</b></td><td>${doc.DocEntry}</td></tr>
+            <tr><td><b>DocNum SAP:</b></td><td>${doc.DocNum}</td></tr>
+          </table>
+          <p>La OC fue marcada como <b>ERROR_DUPLICADO</b> y no se subirá a SAP.</p>
+          </div></body></html>`;
+        try { await sendAlertEmail(`[ERROR OrderLoader] OC ${oc} — Duplicada en SAP B1`, html); } catch { /* ignore */ }
+
+      } else {
+        const resultado = JSON.stringify({ errores: [], n_items: n });
+        db.prepare(`
+          UPDATE pedidos_maestro SET
+            estado='PARSE_VALIDO', sap_existe=0, sap_query_resultado='[]', ts_sap_query=?,
+            fase_actual=2, error_msg=NULL, validacion_resultado=?
+          WHERE orden_compra=?
+        `).run(now, resultado, oc);
+        logPipeline(db, oc, 2, "validate", "OK", `${n} ítem(s) OK — no duplicado en SAP`);
+        result.procesados++;
+        result.detalles.push(`✓ OC ${oc} → PARSE_VALIDO (${n} ítems)`);
+      }
+    } catch (e) {
+      // Error de consulta SAP: dejar en PARSE_VALIDO para retry en próxima corrida
+      const resultado = JSON.stringify({ errores: [], n_items: n });
+      db.prepare(`
+        UPDATE pedidos_maestro SET estado='PARSE_VALIDO', fase_actual=2, error_msg=NULL, validacion_resultado=?
+        WHERE orden_compra=?
+      `).run(resultado, oc);
+      logPipeline(db, oc, 2, "validate", "WARN", `Error SAP en check duplicado: ${String(e).slice(0, 80)}`);
+      result.procesados++;
+      result.detalles.push(`⚠ OC ${oc} → PARSE_VALIDO (formato OK; error SAP al verificar duplicado: ${String(e).slice(0, 60)})`);
     }
   }
 
