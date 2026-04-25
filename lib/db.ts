@@ -31,6 +31,19 @@ export interface PedidoMaestro {
   items_excluidos: string | null;
   error_msg: string | null;
   carpeta_origen: string | null;
+  notificacion_enviada: number | null;
+}
+
+export interface ImapPendingMove {
+  id: number;
+  message_id: string;
+  uid_origen: number | null;
+  carpeta_origen: string;
+  carpeta_destino: string;
+  carpeta_email: string | null;
+  estado: "PENDIENTE" | "COMPLETADO" | "FALLIDO";
+  ts_creado: string;
+  ts_completado: string | null;
 }
 
 export interface PedidoDetalle {
@@ -117,16 +130,30 @@ export function migrate(): void {
       ts              TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS imap_pending_moves (
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      message_id       TEXT NOT NULL,
+      uid_origen       INTEGER,
+      carpeta_origen   TEXT NOT NULL,
+      carpeta_destino  TEXT NOT NULL,
+      carpeta_email    TEXT,
+      estado           TEXT NOT NULL DEFAULT 'PENDIENTE',
+      ts_creado        TEXT DEFAULT (datetime('now')),
+      ts_completado    TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_maestro_estado ON pedidos_maestro(estado);
     CREATE INDEX IF NOT EXISTS idx_maestro_fecha  ON pedidos_maestro(fecha_recepcion);
     CREATE INDEX IF NOT EXISTS idx_detalle_oc     ON pedidos_detalle(orden_compra);
     CREATE INDEX IF NOT EXISTS idx_log_oc         ON pipeline_log(orden_compra);
+    CREATE INDEX IF NOT EXISTS idx_pending_moves  ON imap_pending_moves(estado);
   `);
 
   // Migraciones para columnas agregadas después de la creación inicial
   try { db.exec(`ALTER TABLE pedidos_maestro ADD COLUMN items_excluidos TEXT`); } catch { /* ya existe */ }
   try { db.exec(`ALTER TABLE pipeline_log ADD COLUMN input_tokens INTEGER`); } catch { /* ya existe */ }
   try { db.exec(`ALTER TABLE pipeline_log ADD COLUMN output_tokens INTEGER`); } catch { /* ya existe */ }
+  try { db.exec(`ALTER TABLE pedidos_maestro ADD COLUMN notificacion_enviada INTEGER DEFAULT 0`); } catch { /* ya existe */ }
 
   db.close();
   log.info({ path: config.dbPath }, "DB migrada correctamente");
@@ -187,6 +214,39 @@ export function backupDb(): string | null {
   }
 
   return dest;
+}
+
+export function insertPendingMove(
+  db: Database.Database,
+  messageId: string,
+  uidOrigen: number | null,
+  carpetaOrigen: string,
+  carpetaDestino: string,
+  carpetaEmail?: string
+): number {
+  const result = db.prepare(
+    `INSERT INTO imap_pending_moves (message_id, uid_origen, carpeta_origen, carpeta_destino, carpeta_email)
+     VALUES (?, ?, ?, ?, ?)`
+  ).run(messageId, uidOrigen ?? null, carpetaOrigen, carpetaDestino, carpetaEmail ?? null);
+  return result.lastInsertRowid as number;
+}
+
+export function completePendingMove(db: Database.Database, id: number): void {
+  db.prepare(
+    `UPDATE imap_pending_moves SET estado='COMPLETADO', ts_completado=datetime('now') WHERE id=?`
+  ).run(id);
+}
+
+export function failPendingMove(db: Database.Database, id: number): void {
+  db.prepare(
+    `UPDATE imap_pending_moves SET estado='FALLIDO', ts_completado=datetime('now') WHERE id=?`
+  ).run(id);
+}
+
+export function getPendingMoves(db: Database.Database): ImapPendingMove[] {
+  return db.prepare(
+    `SELECT * FROM imap_pending_moves WHERE estado='PENDIENTE' ORDER BY ts_creado ASC`
+  ).all() as ImapPendingMove[];
 }
 
 export function ensureWorkspaceDirs(): void {

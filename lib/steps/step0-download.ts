@@ -17,7 +17,10 @@ import { simpleParser } from "mailparser";
 import fs from "fs";
 import path from "path";
 import { getConfig } from "../config";
-import { getDb, logPipeline, ensureWorkspaceDirs } from "../db";
+import {
+  getDb, logPipeline, ensureWorkspaceDirs,
+  insertPendingMove, completePendingMove, failPendingMove, getPendingMoves,
+} from "../db";
 import { detectClientFromPdf, esDirigidoATamaprint } from "../pdf-classify";
 
 export interface StepResult {
@@ -77,6 +80,110 @@ async function moveToSandra(imapClient: ImapFlow, uid: number): Promise<void> {
   } catch {
     try { await imapClient.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignorar */ }
   }
+}
+
+/**
+ * Recupera movimientos de email que quedaron a medias si el proceso se cayó.
+ * Se llama al inicio de cada corrida del pipeline, antes de step0.
+ *
+ * Casos:
+ * - Archivos en disco con correo_metadata.json: marcar COMPLETADO (step1 procesa)
+ * - Email aún en INBOX: reintentar el move a STAGING
+ * - No encontrado en ningún lado: marcar FALLIDO y logear alerta
+ */
+export async function recoverPendingMoves(): Promise<string[]> {
+  const logs: string[] = [];
+  let db;
+  try { db = getDb(); } catch { return logs; }
+
+  const pending = getPendingMoves(db);
+  if (pending.length === 0) return logs;
+
+  const config = getConfig();
+  logs.push(`Recovery: ${pending.length} movimiento(s) IMAP pendiente(s) encontrado(s)`);
+
+  const imapClient = new ImapFlow({
+    host: config.emailHost,
+    port: config.emailPort,
+    secure: true,
+    auth: { user: config.emailUser, pass: config.emailPass },
+    logger: false,
+  });
+
+  try {
+    await imapClient.connect();
+
+    for (const pm of pending) {
+      // Caso 1: los archivos en disco están completos → el move ya ocurrió, solo completar
+      if (pm.carpeta_email) {
+        const metaPath = path.join(pm.carpeta_email, "correo_metadata.json");
+        if (fs.existsSync(metaPath)) {
+          completePendingMove(db, pm.id);
+          logs.push(`↩ Recovery OK (archivos presentes): ${pm.carpeta_email}`);
+          continue;
+        }
+      }
+
+      // Caso 2: buscar el email en INBOX por Message-ID → el move no ocurrió, reintentar
+      let foundInInbox = false;
+      try {
+        const lock = await imapClient.getMailboxLock("INBOX");
+        try {
+          for await (const msg of imapClient.fetch("1:*", { uid: true, envelope: true })) {
+            const mid = msg.envelope?.messageId ?? "";
+            if (mid === pm.message_id) {
+              foundInInbox = true;
+              try {
+                await imapClient.messageMove(String(msg.uid), pm.carpeta_destino, { uid: true });
+                completePendingMove(db, pm.id);
+                logs.push(`↩ Recovery OK (re-movido desde INBOX): Message-ID=${pm.message_id}`);
+              } catch (moveErr) {
+                logs.push(`⚠ Recovery: no se pudo mover desde INBOX: ${String(moveErr)}`);
+              }
+              break;
+            }
+          }
+        } finally {
+          lock.release();
+        }
+      } catch { /* INBOX no accesible */ }
+
+      if (foundInInbox) continue;
+
+      // Caso 3: buscar en STAGING → el move sí ocurrió pero los archivos están incompletos
+      let foundInStaging = false;
+      try {
+        const lock = await imapClient.getMailboxLock(pm.carpeta_destino);
+        try {
+          for await (const msg of imapClient.fetch("1:*", { uid: true, envelope: true })) {
+            if ((msg.envelope?.messageId ?? "") === pm.message_id) {
+              foundInStaging = true;
+              break;
+            }
+          }
+        } finally {
+          lock.release();
+        }
+      } catch { /* STAGING no accesible */ }
+
+      if (foundInStaging) {
+        // El email llegó a staging pero los archivos quedaron incompletos.
+        // Marcar FALLIDO: requiere revisión manual.
+        failPendingMove(db, pm.id);
+        logs.push(`⚠ Recovery FALLIDO (email en staging sin archivos): Message-ID=${pm.message_id} — revisar manualmente`);
+      } else {
+        // No encontrado en ningún lado
+        failPendingMove(db, pm.id);
+        logs.push(`⚠ Recovery FALLIDO (email no encontrado en INBOX ni staging): Message-ID=${pm.message_id}`);
+      }
+    }
+
+    await imapClient.logout();
+  } catch (e) {
+    logs.push(`⚠ Recovery: error de conexión IMAP: ${String(e)}`);
+  }
+
+  return logs;
 }
 
 export async function run(): Promise<StepResult> {
@@ -212,6 +319,15 @@ export async function run(): Promise<StepResult> {
             fs.writeFileSync(path.join(pedidoPath, att.filename), att.content);
           }
 
+          // Registrar intención de mover ANTES de ejecutar el move.
+          // Si el proceso se cae después del move pero antes de guardar archivos,
+          // recoverPendingMoves() encontrará este registro y resolverá el estado.
+          let pendingMoveId: number | null = null;
+          try {
+            const db = getDb();
+            pendingMoveId = insertPendingMove(db, messageId, msg.uid, "INBOX", STAGING_FOLDER, pedidoPath);
+          } catch { /* DB podría no estar disponible aún */ }
+
           // Mover a staging — capturar nuevo UID para que step7 lo mueva al final
           let storedUid = msg.uid;
           try {
@@ -258,6 +374,8 @@ export async function run(): Promise<StepResult> {
             const db = getDb();
             logPipeline(db, folderName, 0, "download", "OK",
               `UID=${storedUid} cliente=${client_folder} PDFs_OC=${approvedPdfs.length} extras=${hasExtraFiles}`);
+            // Marcar el pending_move como completado: archivos en disco y DB actualizados
+            if (pendingMoveId !== null) completePendingMove(db, pendingMoveId);
           } catch { /* DB might not exist yet */ }
 
           result.procesados++;

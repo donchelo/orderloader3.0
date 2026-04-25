@@ -2,7 +2,7 @@ import { backupDb, migrate } from "./db";
 import { getLogger } from "./logger";
 
 const log = getLogger("pipeline");
-import { run as step0 } from "./steps/step0-download";
+import { run as step0, recoverPendingMoves } from "./steps/step0-download";
 import { run as step1 } from "./steps/step1-parse";
 import { run as step2 } from "./steps/step2-validate-parse";
 import { run as step3 } from "./steps/step3-sap-query";
@@ -98,6 +98,12 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
 
   // Backup DB before running
   try { backupDb(); } catch (e) { log.error({ err: e }, "backup falló"); }
+
+  // Recuperar movimientos IMAP que quedaron pendientes de un run anterior interrumpido
+  try {
+    const recoveryLogs = await recoverPendingMoves();
+    if (recoveryLogs.length > 0) log.info({ recoveryLogs }, "IMAP pending_moves recovery");
+  } catch (e) { log.error({ err: e }, "recoverPendingMoves falló"); }
 
   try {
     await logoutSapClient();

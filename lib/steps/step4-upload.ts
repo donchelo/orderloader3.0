@@ -151,6 +151,32 @@ export async function run(): Promise<StepResult> {
       continue;
     }
 
+    // ── Verificación de idempotencia: ¿ya fue subida a SAP en un run anterior? ─
+    // Si el proceso se cayó después del POST pero antes de actualizar la DB,
+    // la orden existe en SAP pero el estado sigue siendo SAP_NUEVO. Detectar y recuperar.
+    try {
+      const check = await sap.get<{ value: Array<Record<string, unknown>> }>(
+        "Orders",
+        { "$filter": `NumAtCard eq '${oc}' and CardCode eq '${aiData.CardCode}'`, "$select": "DocEntry,DocNum" }
+      );
+      if (check.value?.length > 0) {
+        const existing = check.value[0];
+        db.prepare(`
+          UPDATE pedidos_maestro SET
+            estado='SAP_MONTADO', sap_doc_entry=?, sap_doc_num=?,
+            ts_sap_upload=?, fase_actual=4, error_msg=NULL
+          WHERE orden_compra=?
+        `).run(existing.DocEntry, String(existing.DocNum ?? ""), now, oc);
+        logPipeline(db, oc, 4, "upload", "OK",
+          `Recuperado: orden ya existía en SAP DocEntry=${existing.DocEntry}`);
+        result.procesados++;
+        result.detalles.push(`↩ OC ${oc} → SAP_MONTADO (recuperado, ya existía DocEntry ${existing.DocEntry})`);
+        continue;
+      }
+    } catch {
+      // Si la verificación falla, continuar con el flujo normal de upload
+    }
+
     // ── Pre-validar artículos contra AlternateCatNum antes de subir ──────────
     let lineas = aiData.DocumentLines.map(l => ({ ...l }));
     const excluidos: typeof lineas = [];

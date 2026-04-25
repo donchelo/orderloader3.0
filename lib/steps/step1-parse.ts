@@ -173,11 +173,15 @@ export async function run(): Promise<StepResult> {
   // Solo bloqueamos si la OC está siendo procesada en este momento por otra instancia.
   // Estados terminales (CERRADO, ERROR_*, NOTIFICADO) se permiten re-procesar:
   // SAP es la única fuente de verdad para detectar duplicados reales (step3).
+  // NOTIFICANDO: estado transitorio de step6. Si el proceso se cayó ahí, step6 lo
+  // recupera solo. No re-procesar desde step1 porque SAP ya tiene la orden creada.
   const ESTADOS_EN_PROCESO = new Set([
     "PARSED",
     "PARSE_VALIDO",
     "SAP_NUEVO",
     "SAP_MONTADO",
+    "VALIDADO",
+    "NOTIFICANDO",
   ]);
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports

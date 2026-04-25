@@ -27,6 +27,7 @@ export interface StepResult {
 const ESTADOS_A_NOTIFICAR = [
   "VALIDADO", "SAP_MONTADO",
   "ERROR_DUPLICADO", "ERROR_ITEMS", "ERROR_SAP", "ERROR_PARSE", "ERROR_VALIDACION",
+  "NOTIFICANDO",
 ] as const;
 
 export async function run(): Promise<StepResult> {
@@ -68,6 +69,25 @@ export async function run(): Promise<StepResult> {
   for (const row of rows) {
     const oc = String(row.orden_compra);
     try {
+      // Recuperación: si el proceso se cayó después de enviar el email pero antes de
+      // actualizar la DB, notificacion_enviada=1 indica que no hay que reenviar.
+      if (row.estado === "NOTIFICANDO" && Number(row.notificacion_enviada) === 1) {
+        db.prepare(`
+          UPDATE pedidos_maestro SET estado='NOTIFICADO', ts_notified=?, fase_actual=6
+          WHERE orden_compra=?
+        `).run(now, oc);
+        logPipeline(db, oc, 6, "notify", "OK", "Recuperado: email ya enviado en run anterior");
+        result.procesados++;
+        result.detalles.push(`↩ OC ${oc} → NOTIFICADO (recuperado, email ya enviado)`);
+        continue;
+      }
+
+      // Registrar intención antes de enviar: transicionar a NOTIFICANDO
+      db.prepare(`
+        UPDATE pedidos_maestro SET estado='NOTIFICANDO', notificacion_enviada=0
+        WHERE orden_compra=?
+      `).run(oc);
+
       // Detectar si el correo original tenía archivos extra no aprobados
       let hasExtraFiles = false;
       let archivosExtra = "";
@@ -105,8 +125,11 @@ export async function run(): Promise<StepResult> {
         ],
       });
 
+      // Marcar que el email fue enviado ANTES de actualizar el estado final.
+      // Si el proceso se cae aquí, el próximo run detecta notificacion_enviada=1
+      // y no reenvía.
       db.prepare(`
-        UPDATE pedidos_maestro SET estado='NOTIFICADO', ts_notified=?, fase_actual=6
+        UPDATE pedidos_maestro SET notificacion_enviada=1, estado='NOTIFICADO', ts_notified=?, fase_actual=6
         WHERE orden_compra=?
       `).run(now, oc);
       logPipeline(db, oc, 6, "notify", "OK", `Email → ${config.notifyEmail}`);
