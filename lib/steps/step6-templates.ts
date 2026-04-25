@@ -273,10 +273,12 @@ function buildExcluidosHtml(rows: Array<Record<string, unknown>>): string {
 
 // ─── Public exports ───────────────────────────────────────────────────────────
 
-export function buildSubjectForOrder(row: Record<string, unknown>): string {
+export function buildSubjectForOrder(row: Record<string, unknown>, hasExtraFiles = false): string {
   const estado = String(row.estado);
   const esParcial = (estado === "SAP_MONTADO" || estado === "VALIDADO") && parseExcluidos(row).length > 0;
-  return `[OrderLoader] OC ${row.orden_compra} | ${row.cliente_nombre || "—"} | ${esParcial ? `${estado} ⚠ PARCIAL` : estado}`;
+  const estadoLabel = esParcial ? `${estado} ⚠ PARCIAL` : estado;
+  const extraSuffix = hasExtraFiles ? " | ⚠ Contiene más documentos" : "";
+  return `[OrderLoader] OC ${row.orden_compra} | ${row.cliente_nombre || "—"} | ${estadoLabel}${extraSuffix}`;
 }
 
 export function buildHtmlForOrder(db: Database.Database, row: Record<string, unknown>, fecha: string): string {

@@ -118,7 +118,7 @@ export async function run(): Promise<StepResult> {
         from: config.emailUser,
         to: config.notifyEmail,
         cc: "pedidos@tamaprint.com",
-        subject: buildSubjectForOrder(row),
+        subject: buildSubjectForOrder(row, hasExtraFiles),
         html,
         attachments: [
           { filename: "logo.png", path: LOGO_PATH, cid: "logo" },

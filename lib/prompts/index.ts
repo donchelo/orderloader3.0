@@ -122,7 +122,9 @@ Extract the following from the document:
 - **OC emission date**: Date printed on the purchase order document → maps to TaxDate
 - **Delivery date**: General/expected delivery date → maps to DocDueDate
 - **Today's date**: The current date at time of processing → maps to DocDate
-- **Observations / remarks**: Verbatim text from any "Observaciones", "Remarks", "Notas", or similar section → maps to Comments. Use "" if none found.
+- **Lugar de ejecución**: Extract the value of the field "Lugar de ejecución" (e.g., "7306  LOGISTICA SALIDA") → this MUST be included in Comments.
+- **Observations / remarks**: Also capture any text from "Observaciones" or similar sections.
+- **Comments**: Compose as follows: if "Lugar de ejecución" is present, start with "Lugar de ejecución: [value]". If there is also non-empty Observaciones text, append it after a separator " | ". If only Observaciones text exists (no Lugar de ejecución), use it verbatim. Use "" only if both are absent.
 - **Individual line items**: For each product:
   - Supplier catalog number / product code
   - Ordered quantity
@@ -172,7 +174,7 @@ Extract the following from the document:
 | Today's date (processing date)  | DocDate           | YYYYMMDD — NOT from document   |
 | OC delivery date                | DocDueDate        | YYYYMMDD — from document       |
 | OC emission date (printed date) | TaxDate           | YYYYMMDD — from document       |
-| Observaciones / Remarks section | Comments          | Verbatim text, "" if absent    |
+| "Lugar de ejecución" + Observaciones | Comments     | "Lugar de ejecución: [val]" prefixed; "" if both absent |
 | Item product/catalog code       | DocumentLines[].SupplierCatNum | String              |
 | Item quantity                   | DocumentLines[].Quantity       | Integer             |
 | Item unit price                 | DocumentLines[].UnitPrice      | Decimal, 0 if absent|
@@ -185,7 +187,7 @@ Before responding, verify:
 - ✅ DocDueDate is the delivery date in YYYYMMDD
 - ✅ CardCode is exactly "CN890900608"
 - ✅ DocType is exactly "dDocument_Items"
-- ✅ Comments contains verbatim observations from the document (or "" if none)
+- ✅ Comments starts with "Lugar de ejecución: [value]" if that field exists; appends any Observaciones text after " | " if non-empty
 - ✅ DocumentLines contains one entry per unique line item with UnitPrice and DeliveryDate
 - ✅ All quantities are whole integers without decimals (commas removed: "9,000" → 9000)
 - ✅ UnitPrice uses American format: dot=decimal, comma=thousands ("28.00" → 28, "2,150.00" → 2150)
