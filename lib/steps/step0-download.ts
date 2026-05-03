@@ -172,13 +172,20 @@ export async function recoverPendingMoves(): Promise<string[]> {
     await imapClient.connect();
 
     for (const pm of pending) {
-      // Caso 1: los archivos en disco están completos → el move ya ocurrió, solo completar
+      // Caso 1: archivos completos en disco Y move IMAP confirmado → solo completar en DB
       if (pm.carpeta_email) {
         const metaPath = path.join(pm.carpeta_email, "correo_metadata.json");
         if (fs.existsSync(metaPath)) {
-          completePendingMove(db, pm.id);
-          logs.push(`↩ Recovery OK (archivos presentes): ${pm.carpeta_email}`);
-          continue;
+          try {
+            const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+            if (meta.imap_move_complete === true) {
+              completePendingMove(db, pm.id);
+              logs.push(`↩ Recovery OK (archivos presentes, move confirmado): ${pm.carpeta_email}`);
+              continue;
+            }
+            // imap_move_complete=false o ausente: archivos en disco pero move no ocurrió aún.
+            // Caer a caso 2 para re-intentar el move desde INBOX.
+          } catch { /* metadata ilegible — caer a caso 2 */ }
         }
       }
 
@@ -417,9 +424,46 @@ export async function run(): Promise<StepResult> {
             fs.writeFileSync(path.join(pedidoPath, att.filename), att.content);
           }
 
+          const approvedNames = approvedPdfs.map(p => p.filename).join(", ");
+          const extraNames    = [
+            ...finalClasificados.filter(p => !p.isApprovedOC).map(p => p.filename),
+            ...nonSignatureOthers.map(a => a.filename),
+          ].join(", ");
+
+          // Escribir metadata ANTES del move IMAP: si el proceso cae entre aquí y el
+          // messageMove, recoverPendingMoves encuentra los archivos completos en disco y
+          // puede re-intentar el move desde INBOX sin perder el correo.
+          // imap_move_complete=false indica que el move aún no ocurrió.
+          const metadataBase = {
+            from: sender,
+            subject,
+            date: dateHeader,
+            client: client_folder,
+            folder_local: `pedidos/raw/${client_folder}/${folderName}`,
+            imap_uid: msg.uid,
+            message_id: messageId,
+            imap_staging_folder: STAGING_FOLDER,
+            n_adjuntos_pdf: approvedPdfs.length,
+            has_extra_files: hasExtraFiles,
+            pdfs_aprobados: approvedNames,
+            ...(hasExtraFiles ? { archivos_extra: extraNames } : {}),
+            ...(triageResults ? { triage_ia: triageResults } : {}),
+            ts_download: new Date().toISOString(),
+            imap_move_complete: false,
+          };
+          fs.writeFileSync(
+            path.join(pedidoPath, "correo_metadata.json"),
+            JSON.stringify(metadataBase, null, 2),
+            "utf8"
+          );
+
+          fs.writeFileSync(
+            path.join(pedidoPath, "estado_pipeline.json"),
+            JSON.stringify({ fase: 0, estado: "DESCARGADO", ts: new Date().toISOString() }, null, 2),
+            "utf8"
+          );
+
           // Registrar intención de mover ANTES de ejecutar el move.
-          // Si el proceso se cae después del move pero antes de guardar archivos,
-          // recoverPendingMoves() encontrará este registro y resolverá el estado.
           let pendingMoveId: number | null = null;
           try {
             const db = getDb();
@@ -436,36 +480,10 @@ export async function run(): Promise<StepResult> {
             try { await imapClient.messageFlagsAdd(String(msg.uid), ["\\Seen"], { uid: true }); } catch { /* ignorar */ }
           }
 
-          const approvedNames = approvedPdfs.map(p => p.filename).join(", ");
-          const extraNames    = [
-            ...finalClasificados.filter(p => !p.isApprovedOC).map(p => p.filename),
-            ...nonSignatureOthers.map(a => a.filename),
-          ].join(", ");
-
+          // Actualizar metadata con el UID final (puede diferir del de INBOX) y confirmar move.
           fs.writeFileSync(
             path.join(pedidoPath, "correo_metadata.json"),
-            JSON.stringify({
-              from: sender,
-              subject,
-              date: dateHeader,
-              client: client_folder,
-              folder_local: `pedidos/raw/${client_folder}/${folderName}`,
-              imap_uid: storedUid,
-              message_id: messageId,
-              imap_staging_folder: STAGING_FOLDER,
-              n_adjuntos_pdf: approvedPdfs.length,
-              has_extra_files: hasExtraFiles,
-              pdfs_aprobados: approvedNames,
-              ...(hasExtraFiles ? { archivos_extra: extraNames } : {}),
-              ...(triageResults ? { triage_ia: triageResults } : {}),
-              ts_download: new Date().toISOString(),
-            }, null, 2),
-            "utf8"
-          );
-
-          fs.writeFileSync(
-            path.join(pedidoPath, "estado_pipeline.json"),
-            JSON.stringify({ fase: 0, estado: "DESCARGADO", ts: new Date().toISOString() }, null, 2),
+            JSON.stringify({ ...metadataBase, imap_uid: storedUid, imap_move_complete: true }, null, 2),
             "utf8"
           );
 
