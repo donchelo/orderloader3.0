@@ -22,6 +22,21 @@ interface LogEntry {
   estado_resultado: string;
   mensaje: string;
   ts: string;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  model: string | null;
+}
+
+const PRICING: Record<string, { in: number; out: number }> = {
+  "claude-sonnet-4-6":        { in: 3.0,  out: 15.0 },
+  "claude-haiku-4-5-20251001": { in: 0.80, out: 4.0  },
+};
+
+function calcCostCop(entry: LogEntry): string | null {
+  if (!entry.input_tokens && !entry.output_tokens) return null;
+  const p = PRICING[entry.model ?? "claude-sonnet-4-6"] ?? PRICING["claude-sonnet-4-6"];
+  const usd = ((entry.input_tokens ?? 0) / 1e6) * p.in + ((entry.output_tokens ?? 0) / 1e6) * p.out;
+  return `$${Math.round(usd * 4200).toLocaleString("es-CO")} COP`;
 }
 
 interface StepResult {
@@ -203,8 +218,18 @@ export default function PedidoDetail({ pedido, onClose, onRetryDone }: Props) {
 
               {/* Items */}
               <div>
-                <div className="text-xs font-semibold uppercase tracking-[0.06em] text-cadet-gray mb-2">
-                  Ítems ({items.length})
+                <div className="text-xs font-semibold uppercase tracking-[0.06em] text-cadet-gray mb-2 flex items-baseline gap-3">
+                  <span>Ítems ({items.length})</span>
+                  {pedido.subtotal > 0 && (
+                    <span className="font-mono text-erie-black/80 normal-case tracking-normal">
+                      Total: {formatCOP(pedido.subtotal)}
+                    </span>
+                  )}
+                  {pedido.costo_ia_usd != null && (
+                    <span className="font-mono text-cadet-gray normal-case tracking-normal" title={`$${pedido.costo_ia_usd.toFixed(5)} USD`}>
+                      IA: ${Math.round(pedido.costo_ia_usd * 4200).toLocaleString("es-CO")} COP
+                    </span>
+                  )}
                 </div>
                 {items.length === 0 ? (
                   <div className="text-xs text-cadet-gray">Sin ítems registrados</div>
@@ -242,16 +267,27 @@ export default function PedidoDetail({ pedido, onClose, onRetryDone }: Props) {
                 <div>
                   <div className="text-xs font-semibold uppercase tracking-[0.06em] text-cadet-gray mb-2">Historial</div>
                   <div className="flex flex-col gap-1">
-                    {logs.map(l => (
-                      <div key={l.id} className={cn(
-                        "flex gap-2 text-xs",
-                        l.estado_resultado === "ERROR" ? "text-hot-orange" : "text-erie-black/70"
-                      )}>
-                        <span className="font-mono text-cadet-gray whitespace-nowrap">{l.ts.slice(5, 16)}</span>
-                        <span className="font-mono text-cadet-gray">f{l.fase}</span>
-                        <span className="flex-1">{l.mensaje}</span>
-                      </div>
-                    ))}
+                    {logs.map(l => {
+                      const costoCop = calcCostCop(l);
+                      return (
+                        <div key={l.id} className={cn(
+                          "flex gap-2 text-xs",
+                          l.estado_resultado === "ERROR" ? "text-hot-orange" : "text-erie-black/70"
+                        )}>
+                          <span className="font-mono text-cadet-gray whitespace-nowrap">{l.ts.slice(5, 16)}</span>
+                          <span className="font-mono text-cadet-gray">f{l.fase}</span>
+                          <span className="flex-1">{l.mensaje}</span>
+                          {costoCop && (
+                            <span
+                              className="font-mono text-cadet-gray/70 whitespace-nowrap"
+                              title={`${l.input_tokens ?? 0} in / ${l.output_tokens ?? 0} out — ${l.model ?? ""}`}
+                            >
+                              {costoCop}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
               )}

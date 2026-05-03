@@ -22,6 +22,7 @@ import {
   insertPendingMove, completePendingMove, failPendingMove, getPendingMoves,
 } from "../db";
 import { detectClientFromPdf, esDirigidoATamaprint } from "../pdf-classify";
+import { triageEmailAttachments, prepareImageForTriage, TRIAGE_MODEL, type AttachmentForTriage, type TriageResult } from "../ai-triage";
 
 export interface StepResult {
   procesados: number;
@@ -42,33 +43,83 @@ interface AttachmentInfo {
 interface PdfClassification {
   filename: string;
   content: Buffer;
-  client: string | null;   // carpeta del cliente aprobado, o null
+  client: string | null;
   isTamaprint: boolean;
-  isApprovedOC: boolean;   // client !== null AND isTamaprint
+  isApprovedOC: boolean;
+  detectionMethod: 'nit' | 'keyword' | null;
 }
 
-async function clasificarPdfs(pdfs: AttachmentInfo[]): Promise<PdfClassification[]> {
+async function clasificarPdfs(
+  pdfs: AttachmentInfo[],
+  textsOut?: Map<string, string>
+): Promise<PdfClassification[]> {
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const pdfParseFn = require("pdf-parse/lib/pdf-parse") as (buf: Buffer) => Promise<{ text: string }>;
   const results: PdfClassification[] = [];
   for (const pdf of pdfs) {
     try {
       const { text } = await pdfParseFn(pdf.content);
-      const client      = detectClientFromPdf(text);
+      if (textsOut) textsOut.set(pdf.filename, text);
+      const detection   = detectClientFromPdf(text);
       const isTamaprint = esDirigidoATamaprint(text);
       results.push({
         filename: pdf.filename,
         content:  pdf.content,
-        client,
+        client:   detection?.carpeta ?? null,
         isTamaprint,
-        isApprovedOC: client !== null && isTamaprint,
+        isApprovedOC: detection !== null && isTamaprint,
+        detectionMethod: detection?.metodo ?? null,
       });
     } catch {
-      // PDF corrupto o no legible: tratar como archivo no reconocido
-      results.push({ filename: pdf.filename, content: pdf.content, client: null, isTamaprint: false, isApprovedOC: false });
+      results.push({ filename: pdf.filename, content: pdf.content, client: null, isTamaprint: false, isApprovedOC: false, detectionMethod: null });
     }
   }
   return results;
+}
+
+const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp']);
+
+function esImagen(filename: string): boolean {
+  const ext = '.' + filename.toLowerCase().split('.').pop();
+  return IMAGE_EXTENSIONS.has(ext);
+}
+
+/**
+ * Ejecuta triage IA sobre todos los adjuntos del correo.
+ * Devuelve los resultados, o null si la IA no está disponible.
+ */
+async function ejecutarTriageIA(
+  clasificados: PdfClassification[],
+  otherAttachments: AttachmentInfo[],
+  pdfTexts: Map<string, string>
+): Promise<{ results: TriageResult[]; inputTokens: number; outputTokens: number } | null> {
+  const attachments: AttachmentForTriage[] = [];
+
+  for (const pdf of clasificados) {
+    const fullText = pdfTexts.get(pdf.filename) ?? '';
+    attachments.push({
+      filename: pdf.filename,
+      tipoArchivo: 'pdf',
+      textoCabecera: fullText.slice(0, 800),
+      textoPie: fullText.length > 800 ? fullText.slice(-400) : undefined,
+      deteccionInicial: pdf.client ? { carpeta: pdf.client, metodo: pdf.detectionMethod! } : null,
+    });
+  }
+
+  for (const att of otherAttachments) {
+    if (esImagen(att.filename)) {
+      const imgData = prepareImageForTriage(att.content, att.filename);
+      attachments.push({
+        filename: att.filename,
+        tipoArchivo: 'imagen',
+        ...imgData,
+      });
+    } else {
+      attachments.push({ filename: att.filename, tipoArchivo: 'otro' });
+    }
+  }
+
+  return triageEmailAttachments(attachments);
 }
 
 const STAGING_FOLDER = "INBOX.A B INGRESADO";
@@ -272,8 +323,36 @@ export async function run(): Promise<StepResult> {
           }
 
           // ── 4. Clasificar cada PDF por su contenido interno ───────────────────
-          const clasificados = await clasificarPdfs(pdfAttachments);
-          const approvedPdfs = clasificados.filter(p => p.isApprovedOC);
+          const pdfTexts = new Map<string, string>();
+          const clasificados = await clasificarPdfs(pdfAttachments, pdfTexts);
+
+          // ── 5. Triage IA: confirma cliente y filtra firmas/logos ──────────────
+          const triageResponse = await ejecutarTriageIA(clasificados, otherAttachments, pdfTexts);
+          const triageResults: TriageResult[] | null = triageResponse?.results ?? null;
+
+          // Ajustar clasificación de PDFs según IA
+          const finalClasificados = clasificados.map(pdf => {
+            const ia = triageResults?.find(r => r.filename === pdf.filename);
+            if (!ia) return pdf;
+
+            // NIT match: la IA puede confirmar pero no revocar (NIT es fuente de verdad)
+            if (pdf.detectionMethod === 'nit') return pdf;
+
+            // keyword match: la IA decide
+            if (pdf.detectionMethod === 'keyword') {
+              if (ia.tipo !== 'orden_compra') {
+                return { ...pdf, isApprovedOC: false };
+              }
+              // Si la IA identifica un cliente diferente, usar el de la IA si existe en lista aprobada
+              if (ia.cliente && ia.cliente !== pdf.client) {
+                return { ...pdf, client: ia.cliente, isApprovedOC: pdf.isTamaprint };
+              }
+            }
+
+            return pdf;
+          });
+
+          const approvedPdfs = finalClasificados.filter(p => p.isApprovedOC);
 
           if (approvedPdfs.length === 0) {
             await moveToSandra(imapClient, msg.uid);
@@ -282,9 +361,12 @@ export async function run(): Promise<StepResult> {
             continue;
           }
 
-          // ── 5. Hay PDFs aprobados: determinar si hay "extras" ─────────────────
-          // Extra = cualquier adjunto que no sea una OC de cliente aprobado
-          const hasExtraFiles = (approvedPdfs.length < pdfAttachments.length) || otherAttachments.length > 0;
+          // ── 6. Determinar si hay "extras" (excluir firmas/logos identificados por IA) ──
+          const nonSignatureOthers = otherAttachments.filter(att => {
+            const ia = triageResults?.find(r => r.filename === att.filename);
+            return ia ? ia.tipo !== 'firma_logo' : true;
+          });
+          const hasExtraFiles = (approvedPdfs.length < pdfAttachments.length) || nonSignatureOthers.length > 0;
 
           // Carpeta de almacenamiento: primer cliente detectado (step1 re-detecta de todos modos)
           const client_folder = approvedPdfs[0].client!;
@@ -340,8 +422,8 @@ export async function run(): Promise<StepResult> {
 
           const approvedNames = approvedPdfs.map(p => p.filename).join(", ");
           const extraNames    = [
-            ...clasificados.filter(p => !p.isApprovedOC).map(p => p.filename),
-            ...otherAttachments.map(a => a.filename),
+            ...finalClasificados.filter(p => !p.isApprovedOC).map(p => p.filename),
+            ...nonSignatureOthers.map(a => a.filename),
           ].join(", ");
 
           fs.writeFileSync(
@@ -359,6 +441,7 @@ export async function run(): Promise<StepResult> {
               has_extra_files: hasExtraFiles,
               pdfs_aprobados: approvedNames,
               ...(hasExtraFiles ? { archivos_extra: extraNames } : {}),
+              ...(triageResults ? { triage_ia: triageResults } : {}),
               ts_download: new Date().toISOString(),
             }, null, 2),
             "utf8"
@@ -374,13 +457,19 @@ export async function run(): Promise<StepResult> {
             const db = getDb();
             logPipeline(db, folderName, 0, "download", "OK",
               `UID=${storedUid} cliente=${client_folder} PDFs_OC=${approvedPdfs.length} extras=${hasExtraFiles}`);
+            if (triageResponse) {
+              logPipeline(db, folderName, 0, "triage", "OK",
+                `adjuntos=${clasificados.length + otherAttachments.length}`,
+                triageResponse.inputTokens, triageResponse.outputTokens, TRIAGE_MODEL);
+            }
             // Marcar el pending_move como completado: archivos en disco y DB actualizados
             if (pendingMoveId !== null) completePendingMove(db, pendingMoveId);
           } catch { /* DB might not exist yet */ }
 
           result.procesados++;
-          const extraMsg = hasExtraFiles ? ` ⚠ archivos extras: ${extraNames}` : "";
-          result.detalles.push(`OK: pedidos/raw/${client_folder}/${folderName} (${approvedPdfs.length} OC PDF)${extraMsg}`);
+          const triageMsg = triageResults ? ` [triage IA: ${triageResults.map(r => `${r.filename}→${r.tipo}`).join(', ')}]` : ' [triage IA: no disponible]';
+          const extraMsg  = hasExtraFiles ? ` ⚠ archivos extras: ${extraNames}` : "";
+          result.detalles.push(`OK: pedidos/raw/${client_folder}/${folderName} (${approvedPdfs.length} OC PDF)${extraMsg}${triageMsg}`);
 
           // Un solo pedido por llamada; el pipeline llama step0 en loop
           break;

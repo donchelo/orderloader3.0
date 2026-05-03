@@ -3,9 +3,9 @@
  *
  * Para cada pedido en estado NOTIFICADO:
  *   - Determina destino según resultado:
- *       Sin diferencias ni excluidos → queda en "A B INGRESADO" (no mover)
- *       Con diferencias, excluidos o error → "A A REVISAR IA"
- *       Email con archivos extra no aprobados → "A A SANDRA"
+ *       Limpio, sin archivos extra → queda en "A B INGRESADO" (no mover)
+ *       Limpio + archivos extra no aprobados → "A A SANDRA"
+ *       Con diferencias, excluidos o error (con o sin archivos extra) → "A A REVISAR IA"
  *   - Marca el pedido como CERRADO
  *
  * Además limpia huérfanos: cualquier email en staging cuya OC ya
@@ -210,9 +210,9 @@ export async function run(): Promise<StepResult> {
       const uid       = Number(meta.imap_uid);
       const messageId = meta.message_id as string | undefined;
       const src       = meta.imap_staging_folder ?? SOURCE_FOLDER;
-      const dest      = meta.has_extra_files === true
-        ? DEST_SANDRA
-        : (isLimpio(row) ? DEST_OK : DEST_REVISAR);
+      const dest      = isLimpio(row)
+        ? (meta.has_extra_files === true ? DEST_SANDRA : DEST_OK)
+        : DEST_REVISAR;
       moveJobs.push({ uid, messageId, source: src, dest });
       destByOrden[String(row.orden_compra)] = dest;
     } catch { /* metadata no disponible */ }
@@ -251,9 +251,9 @@ export async function run(): Promise<StepResult> {
         const row = cerradoMap.get(oc);
         if (!row) continue;
         for (const { uid, messageId, hasExtraFiles, source } of entries) {
-          const dest = hasExtraFiles
-            ? DEST_SANDRA
-            : (isLimpio(row) ? DEST_OK : DEST_REVISAR);
+          const dest = isLimpio(row)
+            ? (hasExtraFiles ? DEST_SANDRA : DEST_OK)
+            : DEST_REVISAR;
           orphanJobs.push({ uid, messageId, source, dest });
         }
       }

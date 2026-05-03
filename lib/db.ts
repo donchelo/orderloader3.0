@@ -153,7 +153,9 @@ export function migrate(): void {
   try { db.exec(`ALTER TABLE pedidos_maestro ADD COLUMN items_excluidos TEXT`); } catch { /* ya existe */ }
   try { db.exec(`ALTER TABLE pipeline_log ADD COLUMN input_tokens INTEGER`); } catch { /* ya existe */ }
   try { db.exec(`ALTER TABLE pipeline_log ADD COLUMN output_tokens INTEGER`); } catch { /* ya existe */ }
+  try { db.exec(`ALTER TABLE pipeline_log ADD COLUMN model TEXT`); } catch { /* ya existe */ }
   try { db.exec(`ALTER TABLE pedidos_maestro ADD COLUMN notificacion_enviada INTEGER DEFAULT 0`); } catch { /* ya existe */ }
+  try { db.exec(`ALTER TABLE pedidos_maestro ADD COLUMN costo_ia_usd REAL`); } catch { /* ya existe */ }
 
   db.close();
   log.info({ path: config.dbPath }, "DB migrada correctamente");
@@ -167,12 +169,13 @@ export function logPipeline(
   estado: "OK" | "ERROR" | "WARN",
   mensaje: string,
   inputTokens?: number,
-  outputTokens?: number
+  outputTokens?: number,
+  model?: string
 ): void {
   db.prepare(
-    `INSERT INTO pipeline_log (orden_compra, fase, fase_nombre, estado_resultado, mensaje, input_tokens, output_tokens)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(oc, fase, faseNombre, estado, mensaje, inputTokens ?? null, outputTokens ?? null);
+    `INSERT INTO pipeline_log (orden_compra, fase, fase_nombre, estado_resultado, mensaje, input_tokens, output_tokens, model)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  ).run(oc, fase, faseNombre, estado, mensaje, inputTokens ?? null, outputTokens ?? null, model ?? null);
 }
 
 export function backupDb(): string | null {

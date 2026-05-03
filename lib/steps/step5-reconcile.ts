@@ -180,6 +180,23 @@ export async function run(): Promise<StepResult> {
         }
       }
 
+      // ── Actualizar precios reales desde SAP ──────────────────────────────
+      const docTotal = Number(sapOrder.DocTotal ?? 0);
+      db.prepare(`UPDATE pedidos_maestro SET subtotal=? WHERE orden_compra=?`)
+        .run(docTotal, oc);
+
+      const updDetalle = db.prepare(`
+        UPDATE pedidos_detalle SET precio_unitario=?, subtotal_item=?
+        WHERE orden_compra=? AND LTRIM(codigo_producto, '0')=LTRIM(?, '0')
+      `);
+      for (const sapLine of sapLines) {
+        const sapPrice = Number(sapLine.Price ?? sapLine.UnitPrice ?? 0);
+        const qty      = Number(sapLine.Quantity ?? 0);
+        if (sapPrice > 0) {
+          updDetalle.run(sapPrice, sapPrice * qty, oc, String(sapLine.SupplierCatNum ?? ""));
+        }
+      }
+
       // ── Resultado ────────────────────────────────────────────────────────
       const ok = diferencias.length === 0;
       const nuevoEstado = ok ? "VALIDADO" : "ERROR_VALIDACION";

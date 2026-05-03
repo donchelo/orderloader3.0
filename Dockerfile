@@ -33,7 +33,10 @@ ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
 # Instalar posibles dependencias de runtime nativas requeridas
-RUN apk add --no-cache libc6-compat
+# poppler-utils: pdftoppm convierte páginas PDF a PNG para análisis visual con Claude
+# font-liberation + ttf-dejavu: fuentes Helvetica-compatibles requeridas para renderizar PDFs
+RUN apk add --no-cache libc6-compat poppler-utils font-liberation ttf-dejavu fontconfig \
+    && fc-cache -f
 
 # Copiar carpeta public (Next.js requiere esto)
 COPY --from=builder /app/public ./public

@@ -58,23 +58,28 @@ export const CLIENT_TEXT_KEYWORDS: Array<{ carpeta: string; keywords: string[] }
   { carpeta: "Termimoda",        keywords: ["termimoda", "900447263"] },
 ];
 
+export interface ClientDetection {
+  carpeta: string;
+  metodo: 'nit' | 'keyword';
+}
+
 /**
  * Detecta el cliente aprobado a partir del texto extraído de un PDF.
  *
  * Paso 1: busca NIT normalizado (quita puntos para matchear "800.069.933" = "800069933").
  * Paso 2: keywords de marca como fallback (solo si no hay NIT).
  *
- * Retorna el nombre de carpeta del cliente (ej. "Comodin") o null si no se reconoce.
+ * Retorna { carpeta, metodo } o null si no se reconoce.
  */
-export function detectClientFromPdf(pdfText: string): string | null {
+export function detectClientFromPdf(pdfText: string): ClientDetection | null {
   const normalized = pdfText.replace(/\./g, "");
   for (const { carpeta, nits } of CLIENT_NITS) {
-    if (nits.some(nit => normalized.includes(nit))) return carpeta;
+    if (nits.some(nit => normalized.includes(nit))) return { carpeta, metodo: 'nit' };
   }
 
   const lower = pdfText.toLowerCase();
   for (const { carpeta, keywords } of CLIENT_TEXT_KEYWORDS) {
-    if (keywords.some(kw => lower.includes(kw))) return carpeta;
+    if (keywords.some(kw => lower.includes(kw))) return { carpeta, metodo: 'keyword' };
   }
 
   return null;

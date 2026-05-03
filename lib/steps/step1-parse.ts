@@ -15,6 +15,7 @@ import { SapB1OrderSchema, type SapB1Order } from "../schemas";
 export type { SapB1Order };
 import { PROMPT_COMODIN, PROMPT_EXITO, PROMPT_HERMECO, PROMPT_EUROCORSETT, PROMPT_INDUSTRIASCORY, PROMPT_ESTUDIOMODA, PROMPT_PINTURAS_PRIME, PROMPT_MANUTEX, PROMPT_ELGLOBO, PROMPT_SERVICIO_COMPLETO, PROMPT_ICVO, PROMPT_PRODUEMPAK, PROMPT_PROINTIMO, PROMPT_TERMIMODA } from "../prompts";
 import { detectClientFromPdf, esDirigidoATamaprint } from "../pdf-classify";
+import { pdfToImages, buildVisionContent } from "../pdf-vision";
 
 export interface StepResult {
   procesados: number;
@@ -32,18 +33,23 @@ function yyyymmddToIso(d: string): string {
 
 // ── AI Parser ─────────────────────────────────────────────────────────────────
 
-async function parseWithAI(pdfText: string, prompt: string): Promise<[SapB1Order | null, string, { input?: number, output?: number }]> {
+async function parseWithAI(pdfBuffer: Buffer, prompt: string): Promise<[SapB1Order | null, string, { input?: number, output?: number }]> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return [null, "ANTHROPIC_API_KEY no configurado en .env", {}];
 
   const client = new Anthropic({ apiKey });
+
+  // Convertir PDF a imágenes para que Claude vea la tabla visualmente,
+  // evitando que pdf-parse fusione columnas adyacentes (ej. ítem + código).
+  const { pages } = await pdfToImages(pdfBuffer);
+  const visionContent = buildVisionContent(pages);
 
   const msg = await client.messages.create({
     model: "claude-sonnet-4-6",
     max_tokens: 8192,
     temperature: 0,
     system: prompt,
-    messages: [{ role: "user", content: pdfText }],
+    messages: [{ role: "user", content: visionContent }],
   });
 
   const text = msg.content[0].type === "text" ? msg.content[0].text.trim() : "";
@@ -82,13 +88,6 @@ function insertSapOrder(
   const fechaP = yyyymmddToIso(order.DocDate);
   const fechaG = yyyymmddToIso(order.DocDueDate);
 
-  db.prepare(`
-    INSERT OR REPLACE INTO pedidos_maestro
-      (nit_cliente, orden_compra, fecha_solicitado, fecha_entrega_general,
-       cliente_nombre, subtotal, notas, estado, ts_parsed, fase_actual, carpeta_origen)
-    VALUES (?, ?, ?, ?, ?, 0, ?, 'PARSED', ?, 1, ?)
-  `).run(nit, order.NumAtCard, fechaP, fechaG, clienteNombre, `TaxDate:${order.TaxDate}`, now, carpeta);
-
   db.prepare("DELETE FROM pedidos_detalle WHERE orden_compra = ?").run(order.NumAtCard);
 
   const ins = db.prepare(`
@@ -96,13 +95,22 @@ function insertSapOrder(
       (orden_compra, codigo_producto, descripcion, cantidad, precio_unitario, subtotal_item, fecha_entrega)
     VALUES (?, ?, ?, ?, ?, ?, ?)
   `);
+  let subtotalTotal = 0;
   for (const line of order.DocumentLines) {
     const precio = line.UnitPrice ?? 0;
-    const subtotal = precio * line.Quantity;
+    const subtotalLinea = precio * line.Quantity;
+    subtotalTotal += subtotalLinea;
     const fechaLinea = line.DeliveryDate ? yyyymmddToIso(line.DeliveryDate) : fechaG;
     const desc = line.FreeText ?? "";
-    ins.run(order.NumAtCard, line.SupplierCatNum, desc, line.Quantity, precio, subtotal, fechaLinea);
+    ins.run(order.NumAtCard, line.SupplierCatNum, desc, line.Quantity, precio, subtotalLinea, fechaLinea);
   }
+
+  db.prepare(`
+    INSERT OR REPLACE INTO pedidos_maestro
+      (nit_cliente, orden_compra, fecha_solicitado, fecha_entrega_general,
+       cliente_nombre, subtotal, notas, estado, ts_parsed, fase_actual, carpeta_origen)
+    VALUES (?, ?, ?, ?, ?, ?, ?, 'PARSED', ?, 1, ?)
+  `).run(nit, order.NumAtCard, fechaP, fechaG, clienteNombre, subtotalTotal, `TaxDate:${order.TaxDate}`, now, carpeta);
 }
 
 // esDirigidoATamaprint y detectClientFromPdf importados desde lib/pdf-classify.ts
@@ -239,7 +247,7 @@ export async function run(): Promise<StepResult> {
           }
 
           // ── Detectar cliente desde el PDF (fuente de verdad) ──────────────
-          const detectedCarpeta = detectClientFromPdf(parsed.text);
+          const detectedCarpeta = detectClientFromPdf(parsed.text)?.carpeta ?? null;
           const clienteInfo = CLIENTES.find(c => c.carpeta === detectedCarpeta);
 
           if (!clienteInfo) {
@@ -267,12 +275,12 @@ export async function run(): Promise<StepResult> {
             logPipeline(db, carpetaNombre, 1, "parse", "WARN", `${pdfFile}: carpeta=${carpeta} pdf_cliente=${detectedCarpeta}`);
           }
 
-          const [order, status, usage] = await parseWithAI(parsed.text, clienteInfo.prompt);
+          const [order, status, usage] = await parseWithAI(buffer, clienteInfo.prompt);
 
           if (!order) {
             result.errores++;
             result.detalles.push(`  ✗ ${status}`);
-            logPipeline(db, carpetaNombre, 1, "parse", "ERROR", `AI parse fallido: ${status}`, usage.input, usage.output);
+            logPipeline(db, carpetaNombre, 1, "parse", "ERROR", `AI parse fallido: ${status}`, usage.input, usage.output, "claude-sonnet-4-6");
             const retries = fs.existsSync(retriesPath)
               ? parseInt(fs.readFileSync(retriesPath, "utf8") || "0") + 1 : 1;
             if (retries >= 3) {
@@ -313,9 +321,13 @@ export async function run(): Promise<StepResult> {
             fs.copyFileSync(metaSrc, path.join(ocFolder, "correo_metadata.json"));
           }
 
+          const costoIaUsd = ((usage.input ?? 0) / 1e6) * 3.0 + ((usage.output ?? 0) / 1e6) * 15.0;
+
           const tx = db.transaction(() => {
-            insertSapOrder(db, order, ocFolder, clienteInfo.nombre); // carpeta_origen = sub-folder de la OC
-            logPipeline(db, order.NumAtCard, 1, "parse", "OK", `PDF: ${pdfFile}`, usage.input, usage.output);
+            insertSapOrder(db, order, ocFolder, clienteInfo.nombre);
+            db.prepare(`UPDATE pedidos_maestro SET costo_ia_usd=? WHERE orden_compra=?`)
+              .run(costoIaUsd, order.NumAtCard);
+            logPipeline(db, order.NumAtCard, 1, "parse", "OK", `PDF: ${pdfFile}`, usage.input, usage.output, "claude-sonnet-4-6");
           });
           tx();
 

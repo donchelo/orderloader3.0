@@ -12,6 +12,7 @@ export interface Pedido {
   fecha_solicitado: string;
   fecha_entrega_general: string;
   subtotal: number;
+  costo_ia_usd: number | null;
   estado: string;
   fase_actual: number;
   error_msg: string | null;
@@ -229,10 +230,10 @@ export default function PedidoTable({ pedidos, filtroEstado, onFiltroChange, onS
                 <th className="py-3 px-4 text-center w-10">
                   <input type="checkbox" checked={allFilteredSelected} onChange={toggleAll} className="cursor-pointer" />
                 </th>
-                {["OC", "Cliente", "Solicitado", "Entrega", "Subtotal", "Estado", "SAP Doc", "Nota"].map(h => (
+                {["OC", "Cliente", "Solicitado", "Entrega", "Subtotal", "Costo IA", "Estado", "SAP Doc", "Nota"].map(h => (
                   <th key={h} className={cn(
                     "py-3 px-4 font-semibold tracking-[0.04em] text-xs uppercase text-cadet-gray",
-                    h === "Subtotal" ? "text-right" : h === "Estado" ? "text-center" : "text-left"
+                    h === "Subtotal" || h === "Costo IA" ? "text-right" : h === "Estado" ? "text-center" : "text-left"
                   )}>
                     {h}
                   </th>
@@ -265,6 +266,9 @@ export default function PedidoTable({ pedidos, filtroEstado, onFiltroChange, onS
                     <td className="py-2.5 px-4 font-mono text-xs" data-mono>{formatDate(p.fecha_solicitado)}</td>
                     <td className="py-2.5 px-4 font-mono text-xs" data-mono>{formatDate(p.fecha_entrega_general)}</td>
                     <td className="py-2.5 px-4 text-right font-mono text-xs" data-mono>{formatCOP(p.subtotal)}</td>
+                    <td className="py-2.5 px-4 text-right font-mono text-xs text-cadet-gray" title={p.costo_ia_usd != null ? `$${p.costo_ia_usd.toFixed(5)} USD` : undefined}>
+                      {p.costo_ia_usd != null ? `$${Math.round(p.costo_ia_usd * 4200).toLocaleString("es-CO")}` : "—"}
+                    </td>
                     <td className="py-2.5 px-4 text-center">
                       <PipelineStatus estado={p.estado} />
                     </td>
