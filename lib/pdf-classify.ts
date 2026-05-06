@@ -83,7 +83,7 @@ export function detectClientFromPdf(
 
   const lower = pdfText.toLowerCase();
   for (const { carpeta, keywords } of clientKeywords) {
-    if (keywords.some(kw => lower.includes(kw))) return { carpeta, metodo: 'keyword' };
+    if (keywords.some(kw => lower.includes(kw.toLowerCase()))) return { carpeta, metodo: 'keyword' };
   }
 
   return null;
