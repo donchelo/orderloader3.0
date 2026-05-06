@@ -14,7 +14,7 @@ import { withAnthropicRetry } from "./anthropic-retry";
 
 export type AttachmentTipo = 'orden_compra' | 'firma_logo' | 'documento_relevante' | 'desconocido';
 
-export type ClientNitList = Array<{ carpeta: string; nits: string[] }>;
+export type ClientNitList = Array<{ carpeta: string; nits: string[]; nombre?: string }>;
 
 export interface AttachmentForTriage {
   filename: string;
@@ -39,8 +39,8 @@ function buildSystemPrompt(clientNits: ClientNitList): string {
   return `Eres un agente de triage para Tamaprint, empresa colombiana de impresión.
 Tu tarea: clasificar cada adjunto de un correo de pedidos.
 
-CLIENTES APROBADOS (NIT → carpeta):
-${clientNits.map(c => `  ${c.nits[0]} → ${c.carpeta}`).join('\n')}
+CLIENTES APROBADOS (NIT | nombre | carpeta):
+${clientNits.map(c => `  ${c.nits[0]} | ${c.nombre ?? c.carpeta} | ${c.carpeta}`).join('\n')}
 
 TIPOS DE CLASIFICACIÓN:
 - "orden_compra": orden de compra dirigida a Tamaprint, de un cliente aprobado
@@ -49,10 +49,11 @@ TIPOS DE CLASIFICACIÓN:
 - "desconocido": no se puede determinar
 
 REGLAS:
-1. Para PDFs: el NIT del emisor en el documento es la señal más confiable de identidad.
-2. Si el PDF menciona una marca/empresa pero el NIT no corresponde a ese cliente, NO es una OC de ese cliente.
-3. Imágenes pequeñas (logos, firmas) son "firma_logo". Imágenes de documentos escaneados son "documento_relevante".
-4. Si hay duda, usar "desconocido".
+1. El NIT del emisor en el documento es la señal más confiable de identidad del cliente.
+2. Si el PDF no tiene texto (escaneado), usa el asunto del correo y el nombre del archivo como señales.
+3. El campo "cliente" debe ser el valor de la columna "carpeta" del cliente identificado (ej: "BysproPO"), o null.
+4. Imágenes pequeñas (logos, firmas) son "firma_logo". Imágenes de documentos escaneados son "documento_relevante".
+5. Si hay duda, usar "desconocido".
 
 Responde SOLO con JSON array (sin explicaciones, sin markdown):
 [{"filename":"...","tipo":"...","cliente":"Carpeta o null","razon":"una línea breve"}]`;
@@ -69,6 +70,7 @@ export interface TriageResponse {
 export async function triageEmailAttachments(
   attachments: AttachmentForTriage[],
   clientNits: ClientNitList = CLIENT_NITS,
+  emailSubject?: string,
 ): Promise<TriageResponse | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
@@ -119,7 +121,7 @@ export async function triageEmailAttachments(
   // Si hay imágenes, intercalar texto e imágenes en el contenido
   if (imageBlocks.length > 0) {
     // Dividir la descripción por bloques de imagen
-    let currentText = `Adjuntos del correo a clasificar:\n`;
+    let currentText = `${emailSubject ? `Asunto del correo: "${emailSubject}"\n\n` : ''}Adjuntos del correo a clasificar:\n`;
     const lines = attachmentDescriptions.split('\n');
 
     for (const line of lines) {
@@ -145,7 +147,7 @@ export async function triageEmailAttachments(
   } else {
     contentBlocks.push({
       type: 'text',
-      text: `Adjuntos del correo a clasificar:\n${attachmentDescriptions}`,
+      text: `${emailSubject ? `Asunto del correo: "${emailSubject}"\n\n` : ''}Adjuntos del correo a clasificar:\n${attachmentDescriptions}`,
     });
   }
 

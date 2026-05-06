@@ -99,6 +99,7 @@ async function ejecutarTriageIA(
   otherAttachments: AttachmentInfo[],
   pdfTexts: Map<string, string>,
   clientNits: Array<{ carpeta: string; nits: string[] }> = CLIENT_NITS,
+  emailSubject?: string,
 ): Promise<{ results: TriageResult[]; inputTokens: number; outputTokens: number } | null> {
   const attachments: AttachmentForTriage[] = [];
 
@@ -126,7 +127,7 @@ async function ejecutarTriageIA(
     }
   }
 
-  return triageEmailAttachments(attachments, clientNits);
+  return triageEmailAttachments(attachments, clientNits, emailSubject);
 }
 
 const STAGING_FOLDER = "INBOX.A A REVISAR IA";
@@ -350,7 +351,7 @@ export async function run(): Promise<StepResult> {
           const clasificados = await clasificarPdfs(pdfAttachments, clientNits, clientKeywords, pdfTexts);
 
           // ── 5. Triage IA: confirma cliente y filtra firmas/logos ──────────────
-          const triageResponse = await ejecutarTriageIA(clasificados, otherAttachments, pdfTexts, clientNits);
+          const triageResponse = await ejecutarTriageIA(clasificados, otherAttachments, pdfTexts, clientNits, subject);
           const triageResults: TriageResult[] | null = triageResponse?.results ?? null;
 
           // Ajustar clasificación de PDFs según IA

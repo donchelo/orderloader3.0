@@ -94,16 +94,16 @@ export function detectClientFromPdf(
  * Retorna las listas hardcodeadas como fallback si la DB no tiene registros.
  */
 export function loadClientListsFromDb(db: import("better-sqlite3").Database): {
-  nits: Array<{ carpeta: string; nits: string[] }>;
+  nits: Array<{ carpeta: string; nits: string[]; nombre?: string }>;
   keywords: Array<{ carpeta: string; keywords: string[] }>;
 } {
   try {
     const rows = db.prepare(
-      "SELECT carpeta, nits_json, keywords_json FROM clientes_aprobados WHERE activo = 1 ORDER BY nombre ASC"
-    ).all() as Array<{ carpeta: string; nits_json: string; keywords_json: string }>;
+      "SELECT carpeta, nombre, nits_json, keywords_json FROM clientes_aprobados WHERE activo = 1 ORDER BY nombre ASC"
+    ).all() as Array<{ carpeta: string; nombre: string; nits_json: string; keywords_json: string }>;
     if (rows.length === 0) return { nits: CLIENT_NITS, keywords: CLIENT_TEXT_KEYWORDS };
     return {
-      nits:     rows.map(r => ({ carpeta: r.carpeta, nits:     JSON.parse(r.nits_json)     as string[] })),
+      nits:     rows.map(r => ({ carpeta: r.carpeta, nombre: r.nombre, nits: JSON.parse(r.nits_json) as string[] })),
       keywords: rows.map(r => ({ carpeta: r.carpeta, keywords: JSON.parse(r.keywords_json) as string[] })),
     };
   } catch {
