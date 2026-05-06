@@ -358,8 +358,15 @@ export async function run(): Promise<StepResult> {
             const ia = triageResults?.find(r => r.filename === pdf.filename);
             if (!ia) return pdf;
 
-            // NIT match: la IA puede confirmar pero no revocar (NIT es fuente de verdad)
-            if (pdf.detectionMethod === 'nit') return pdf;
+            // NIT match: la IA puede ELEVAR isApprovedOC si isTamaprint fue false
+            // (ej. PDF escaneado o que no menciona "Tamaprint" explícitamente en el texto).
+            // La IA no puede revocar un NIT confirmado.
+            if (pdf.detectionMethod === 'nit') {
+              if (!pdf.isApprovedOC && ia.tipo === 'orden_compra') {
+                return { ...pdf, isApprovedOC: true };
+              }
+              return pdf;
+            }
 
             // keyword match: la IA decide
             if (pdf.detectionMethod === 'keyword') {
@@ -369,6 +376,14 @@ export async function run(): Promise<StepResult> {
               // Si la IA identifica un cliente diferente, usar el de la IA si existe en lista aprobada
               if (ia.cliente && ia.cliente !== pdf.client) {
                 return { ...pdf, client: ia.cliente, isApprovedOC: pdf.isTamaprint };
+              }
+            }
+
+            // Sin detección heurística → la IA es el único detector disponible
+            if (pdf.detectionMethod === null && ia.tipo === 'orden_compra' && ia.cliente) {
+              const clientExists = clientNits.some(c => c.carpeta === ia.cliente);
+              if (clientExists) {
+                return { ...pdf, client: ia.cliente, isApprovedOC: true };
               }
             }
 
