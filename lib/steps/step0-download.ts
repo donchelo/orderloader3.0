@@ -488,18 +488,21 @@ export async function run(): Promise<StepResult> {
 
           // Mover a staging — capturar nuevo UID para que step7 lo mueva al final
           let storedUid = msg.uid;
+          let imapMoveOk = false;
           try {
             const moveResult = await imapClient.messageMove(String(msg.uid), STAGING_FOLDER, { uid: true });
             const newUid = (moveResult as { uidMap?: Map<number, number> })?.uidMap?.get(msg.uid);
             if (newUid) storedUid = newUid;
+            imapMoveOk = true;
           } catch {
             try { await imapClient.messageFlagsAdd(String(msg.uid), ["\\Seen"], { uid: true }); } catch { /* ignorar */ }
           }
 
-          // Actualizar metadata con el UID final (puede diferir del de INBOX) y confirmar move.
+          // Actualizar metadata con el UID final y el estado real del move.
+          // imap_move_complete=false significa que recoverPendingMoves debe reintentar el move.
           fs.writeFileSync(
             path.join(pedidoPath, "correo_metadata.json"),
-            JSON.stringify({ ...metadataBase, imap_uid: storedUid, imap_move_complete: true }, null, 2),
+            JSON.stringify({ ...metadataBase, imap_uid: storedUid, imap_move_complete: imapMoveOk }, null, 2),
             "utf8"
           );
 
@@ -512,8 +515,9 @@ export async function run(): Promise<StepResult> {
                 `adjuntos=${clasificados.length + otherAttachments.length}`,
                 triageResponse.inputTokens, triageResponse.outputTokens, TRIAGE_MODEL);
             }
-            // Marcar el pending_move como completado: archivos en disco y DB actualizados
-            if (pendingMoveId !== null) completePendingMove(db, pendingMoveId);
+            // Solo completar el pending_move si el move IMAP ocurrió realmente.
+            // Si falló, queda PENDING para que recoverPendingMoves lo reintente.
+            if (pendingMoveId !== null && imapMoveOk) completePendingMove(db, pendingMoveId);
           } catch { /* DB might not exist yet */ }
 
           result.procesados++;

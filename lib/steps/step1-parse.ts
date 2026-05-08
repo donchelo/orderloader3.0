@@ -267,7 +267,7 @@ export async function run(): Promise<StepResult> {
 
         if (fs.existsSync(errorPath)) {
           result.saltados++;
-          result.detalles.push(`⚠ ${pdfFile}: omitido (max reintentos AI alcanzados)`);
+          fs.writeFileSync(doneMarker, "error");  // siguiente corrida usa el check silencioso de línea 260
           continue;
         }
 
