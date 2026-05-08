@@ -219,20 +219,6 @@ export async function run(): Promise<StepResult> {
 
   const CLIENTES = clientesDb.length > 0 ? clientesDb : [];
   const CARPETAS_A_ESCANEAR = [...CLIENTES.map(c => c.carpeta), "Otros"];
-  // Pedidos en cualquiera de estos estados NO se re-procesan desde step1.
-  // CERRADO/NOTIFICADO: ya completados — SAP los tiene, no volver a subir.
-  // El resto: en vuelo — otra instancia los está procesando.
-  const ESTADOS_EN_PROCESO = new Set([
-    "PARSED",
-    "PARSE_VALIDO",
-    "SAP_NUEVO",     // backward compat con órdenes anteriores a la restructuración
-    "CATALOG_OK",    // step3 completado, esperando upload
-    "SAP_MONTADO",
-    "VALIDADO",
-    "NOTIFICANDO",
-    "NOTIFICADO",
-    "CERRADO",
-  ]);
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
   const pdfParseFn = require("pdf-parse/lib/pdf-parse") as (buf: Buffer) => Promise<{ text: string }>;
@@ -346,17 +332,6 @@ export async function run(): Promise<StepResult> {
           // DocDate siempre es la fecha de hoy — no depender del AI
           const hoy = new Date();
           order.DocDate = `${hoy.getFullYear()}${String(hoy.getMonth()+1).padStart(2,"0")}${String(hoy.getDate()).padStart(2,"0")}`;
-
-          const existente = db.prepare(
-            "SELECT estado FROM pedidos_maestro WHERE orden_compra = ?"
-          ).get(order.NumAtCard) as { estado: string } | undefined;
-
-          if (existente && ESTADOS_EN_PROCESO.has(existente.estado)) {
-            result.saltados++;
-            result.detalles.push(`  [skip] OC ${order.NumAtCard} en proceso activo (${existente.estado})`);
-            fs.writeFileSync(doneMarker, order.NumAtCard);
-            continue;
-          }
 
           // Sub-folder por OC: carpeta_origen independiente para cada pedido del correo
           const ocFolder = path.join(carpetaPath, order.NumAtCard);

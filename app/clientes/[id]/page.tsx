@@ -37,6 +37,12 @@ export default function ClienteDetailPage() {
   const [prompt,   setPrompt]   = useState("");
   const [activo,   setActivo]   = useState(1);
 
+  // AI iteration state (ephemeral, not saved to DB)
+  const [notes,          setNotes]          = useState("");
+  const [improving,      setImproving]      = useState(false);
+  const [improvedPrompt, setImprovedPrompt] = useState<string | null>(null);
+  const [iterError,      setIterError]      = useState<string | null>(null);
+
   const fetchCliente = useCallback(async () => {
     try {
       const res  = await fetch(`/api/clientes/${id}`);
@@ -80,6 +86,29 @@ export default function ClienteDetailPage() {
       else setError(data.error ?? "Error al guardar");
     } catch (e) { setError(String(e)); }
     finally { setSaving(false); }
+  }
+
+  async function handleMejorar() {
+    setImproving(true);
+    setImprovedPrompt(null);
+    setIterError(null);
+    try {
+      const res = await fetch(`/api/clientes/${id}/mejorar-prompt`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, notes }),
+      });
+      const data = await res.json() as { ok: boolean; improved_prompt?: string; error?: string };
+      if (data.ok && data.improved_prompt) {
+        setImprovedPrompt(data.improved_prompt);
+      } else {
+        setIterError(data.error ?? "Error al mejorar el prompt");
+      }
+    } catch (e) {
+      setIterError(String(e));
+    } finally {
+      setImproving(false);
+    }
   }
 
   function handleNitChange(v: string) {
@@ -231,6 +260,78 @@ export default function ClienteDetailPage() {
                 onChange={e => setPrompt(e.target.value)}
                 spellCheck={false}
               />
+            </Card>
+
+            {/* Mejorar con IA */}
+            <Card variant="elevated" padding="lg">
+              <div className="flex items-center justify-between mb-3">
+                <Text variant="h3">Mejorar con IA</Text>
+                <Badge variant="muted" size="sm">Experimental</Badge>
+              </div>
+              <Text variant="xs" className="text-cadet-gray mb-4">
+                Describí correcciones o aclaraciones para este prompt. La IA lo reescribirá incorporando tus notas sin alterar la estructura general.
+              </Text>
+
+              <label className="flex flex-col gap-1.5">
+                <span className="text-xs font-semibold text-cadet-gray uppercase tracking-wide">Notas / temas a corregir</span>
+                <textarea
+                  className="w-full border border-erie-black/20 rounded-lg px-3 py-3 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-moderate-blue/30 resize-y leading-relaxed"
+                  rows={5}
+                  placeholder={'Ej: la columna de precio se llama "Valor Unit", no "Precio". Las líneas duplicadas deben procesarse por separado, no agrupadas.'}
+                  value={notes}
+                  onChange={e => { setNotes(e.target.value); setImprovedPrompt(null); setIterError(null); }}
+                  spellCheck={false}
+                />
+              </label>
+
+              <div className="flex justify-end mt-3">
+                <Button
+                  variant="primary"
+                  size="md"
+                  onClick={handleMejorar}
+                  disabled={notes.trim() === "" || improving}
+                >
+                  {improving ? "Analizando…" : "Mejorar con IA"}
+                </Button>
+              </div>
+
+              {iterError && (
+                <div className="rounded-xl border border-hot-orange/30 bg-hot-orange/5 px-4 py-3 text-sm text-hot-orange mt-3">
+                  {iterError}
+                </div>
+              )}
+
+              {improvedPrompt !== null && (
+                <div className="mt-4 border-t border-erie-black/10 pt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <Text variant="bodyBold" className="text-sm text-moderate-blue">Prompt mejorado — previsualización</Text>
+                    <span className="text-xs text-cadet-gray font-mono">{improvedPrompt.length} caracteres</span>
+                  </div>
+                  <textarea
+                    className="w-full border border-moderate-blue/30 rounded-lg px-3 py-3 text-xs font-mono bg-white/60 leading-relaxed resize-y"
+                    rows={14}
+                    value={improvedPrompt}
+                    readOnly
+                    spellCheck={false}
+                  />
+                  <div className="flex gap-3 justify-end mt-3">
+                    <Button
+                      variant="secondary"
+                      size="md"
+                      onClick={() => { setImprovedPrompt(null); setNotes(""); }}
+                    >
+                      Descartar
+                    </Button>
+                    <Button
+                      variant="primary"
+                      size="md"
+                      onClick={() => { setPrompt(improvedPrompt); setImprovedPrompt(null); setNotes(""); }}
+                    >
+                      Aplicar mejora
+                    </Button>
+                  </div>
+                </div>
+              )}
             </Card>
 
             {/* Guardar */}
