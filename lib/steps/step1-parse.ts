@@ -73,6 +73,20 @@ async function parseWithAI(pdfBuffer: Buffer, prompt: string): Promise<[SapB1Ord
     if (!isValidYYYYMMDD(rawOrder.TaxDate))    rawOrder.TaxDate    = todayYYYYMMDD();
     if (!isValidYYYYMMDD(rawOrder.DocDueDate)) rawOrder.DocDueDate = todayYYYYMMDD(15);
 
+    // Normalizar DeliveryDate en líneas: el AI a veces devuelve YYYY-MM-DD u otros formatos
+    if (Array.isArray(rawOrder.DocumentLines)) {
+      for (const line of rawOrder.DocumentLines) {
+        if (!isValidYYYYMMDD(line.DeliveryDate)) {
+          // Intentar convertir YYYY-MM-DD → YYYYMMDD
+          if (typeof line.DeliveryDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(line.DeliveryDate)) {
+            line.DeliveryDate = line.DeliveryDate.replace(/-/g, "");
+          } else {
+            line.DeliveryDate = rawOrder.DocDueDate;
+          }
+        }
+      }
+    }
+
     // Validación estricta con Zod
     const result = SapB1OrderSchema.safeParse(rawOrder);
 

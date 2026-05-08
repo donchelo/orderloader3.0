@@ -11,7 +11,7 @@ if [ -f "$ROOT_DIR/.env.local" ]; then
 fi
 
 VM_HOST="${VM_HOST:-}"
-VM_PATH="${VM_PATH:-~/Software/orderloader/.data}"
+VM_PATH="${VM_PATH:-~/orderLoader/.data}"
 
 if [ -z "$VM_HOST" ]; then
   echo "Error: VM_HOST no está definido."
@@ -20,5 +20,17 @@ if [ -z "$VM_HOST" ]; then
 fi
 
 echo "Sincronizando BD desde $VM_HOST:$VM_PATH ..."
-rsync -avz --progress "${VM_HOST}:${VM_PATH}/orderloader.db" "$ROOT_DIR/.data/orderloader.db"
+# Usar SQLite backup via Python para evitar corrupción por WAL mode
+ssh "$VM_HOST" "python3 -c \"
+import sqlite3, shutil
+src = '$VM_PATH/orderloader.db'
+dst = '/tmp/orderloader_backup.db'
+conn = sqlite3.connect(src)
+backup = sqlite3.connect(dst)
+conn.backup(backup)
+backup.close()
+conn.close()
+print('Backup OK')
+\""
+rsync -av --whole-file --progress "${VM_HOST}:/tmp/orderloader_backup.db" "$ROOT_DIR/.data/orderloader.db"
 echo "Listo. BD local actualizada."
