@@ -19,6 +19,15 @@ Siempre que termines de hacer cambios, ejecuta el deploy en Docker:
 docker compose up -d --build
 ```
 
+## Desarrollo Local
+Antes de probar cambios, sincroniza la BD desde la VM:
+```bash
+npm run pull-db
+```
+Configura `VM_HOST=user@ip` y opcionalmente `VM_PATH=~/ruta/.data` en `.env.local` (no se commitea).
+
+**IMPORTANTE:** Nunca correr step 0 localmente — conecta al IMAP real y puede descargar correos del inbox productivo.
+
 ## Troubleshooting
 - **Pipeline Logs**: `docker logs orderloader -f`
 - **DB Backups**: Found in `.data/pedidos/backups/`.

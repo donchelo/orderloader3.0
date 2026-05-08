@@ -202,11 +202,9 @@ export async function run(): Promise<StepResult> {
 
   const CLIENTES = clientesDb.length > 0 ? clientesDb : [];
   const CARPETAS_A_ESCANEAR = [...CLIENTES.map(c => c.carpeta), "Otros"];
-  // Solo bloqueamos si la OC está siendo procesada en este momento por otra instancia.
-  // Estados terminales (CERRADO, ERROR_*, NOTIFICADO) se permiten re-procesar:
-  // SAP es la única fuente de verdad para detectar duplicados reales (step3).
-  // NOTIFICANDO: estado transitorio de step6. Si el proceso se cayó ahí, step6 lo
-  // recupera solo. No re-procesar desde step1 porque SAP ya tiene la orden creada.
+  // Pedidos en cualquiera de estos estados NO se re-procesan desde step1.
+  // CERRADO/NOTIFICADO: ya completados — SAP los tiene, no volver a subir.
+  // El resto: en vuelo — otra instancia los está procesando.
   const ESTADOS_EN_PROCESO = new Set([
     "PARSED",
     "PARSE_VALIDO",
@@ -215,6 +213,8 @@ export async function run(): Promise<StepResult> {
     "SAP_MONTADO",
     "VALIDADO",
     "NOTIFICANDO",
+    "NOTIFICADO",
+    "CERRADO",
   ]);
 
   // eslint-disable-next-line @typescript-eslint/no-require-imports
