@@ -70,7 +70,10 @@ async function parseWithAI(pdfBuffer: Buffer, prompt: string): Promise<[SapB1Ord
 
     // Fechas por defecto si el AI no pudo leerlas del PDF
     const isValidYYYYMMDD = (v: unknown) => typeof v === "string" && /^\d{8}$/.test(v);
-    if (!isValidYYYYMMDD(rawOrder.TaxDate))    rawOrder.TaxDate    = todayYYYYMMDD();
+    const thisYear = new Date().getFullYear();
+    // TaxDate debe ser del año actual (período abierto en SAP); si el AI leyó una fecha antigua, usar hoy
+    const isRecentYear = (v: unknown) => isValidYYYYMMDD(v) && parseInt(String(v).slice(0, 4)) >= thisYear;
+    if (!isRecentYear(rawOrder.TaxDate))    rawOrder.TaxDate    = todayYYYYMMDD();
     if (!isValidYYYYMMDD(rawOrder.DocDueDate)) rawOrder.DocDueDate = todayYYYYMMDD(15);
 
     // Normalizar DeliveryDate en líneas: el AI a veces devuelve YYYY-MM-DD u otros formatos
