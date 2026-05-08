@@ -48,9 +48,37 @@ const STEPS = [
   { n: 7, name: "archive",      fn: step7 },
 ];
 
+// ── Logging helpers ───────────────────────────────────────────────────────────
+
+function fmtMs(ms: number): string {
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+function logStepResult(result: StepResult): void {
+  const label  = `step:${result.step} ${result.name.padEnd(10)}`;
+  const counts = `ok=${result.procesados}  err=${result.errores}  skip=${result.saltados}  (${fmtMs(result.duracionMs)})`;
+
+  if (result.errores > 0) {
+    log.error(`✗ ${label}  ${counts}`);
+  } else {
+    log.info(`✓ ${label}  ${counts}`);
+  }
+
+  for (const line of result.detalles) {
+    const d = line.trim();
+    if (!d) continue;
+    if (d.includes("✗") || /^Error/i.test(d))     log.error(`  ${d}`);
+    else if (d.includes("⚠") || d.startsWith("↩")) log.warn(`  ${d}`);
+    else                                             log.info(`  ${d}`);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 async function runSteps(stepsToRun: typeof STEPS, onStep?: PipelineOptions["onStep"]): Promise<StepResult[]> {
   const results: StepResult[] = [];
   for (const step of stepsToRun) {
+    log.info(`▶ step:${step.n} ${step.name}`);
     const t0 = Date.now();
     let result: StepResult;
     try {
@@ -70,6 +98,7 @@ async function runSteps(stepsToRun: typeof STEPS, onStep?: PipelineOptions["onSt
       };
     }
     results.push(result);
+    logStepResult(result);
     onStep?.(result);
   }
   return results;
@@ -92,6 +121,8 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
 
   _running = true;
   _stopRequested = false;
+  const runStart = Date.now();
+  log.info("─────────────────────────────────── pipeline start ───────────────────────────────────");
 
   // Ensure DB schema exists (handles empty/new DB)
   try { migrate(); } catch (e) { log.error({ err: e }, "migrate falló"); }
@@ -102,7 +133,10 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
   // Recuperar movimientos IMAP que quedaron pendientes de un run anterior interrumpido
   try {
     const recoveryLogs = await recoverPendingMoves();
-    if (recoveryLogs.length > 0) log.info({ recoveryLogs }, "IMAP pending_moves recovery");
+    if (recoveryLogs.length > 0) {
+      log.info(`recovery: ${recoveryLogs.length} movimiento(s) IMAP pendiente(s)`);
+      for (const l of recoveryLogs) log.info(`  ${l}`);
+    }
   } catch (e) { log.error({ err: e }, "recoverPendingMoves falló"); }
 
   try {
@@ -125,8 +159,10 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
     while (true) {
       iteration++;
       await logoutSapClient();
+      log.info(`─── correo ${iteration} ${"─".repeat(Math.max(0, 70 - String(iteration).length))}`);
 
       // Step 0: descargar 1 correo
+      log.info(`▶ step:0 download`);
       const t0 = Date.now();
       let downloadResult: StepResult;
       try {
@@ -147,6 +183,7 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
       }
 
       allResults.push(downloadResult);
+      logStepResult(downloadResult);
       onStep?.(downloadResult);
 
       // Steps 1-5: procesar el correo recién descargado (idempotentes: saltan los ya procesados)
@@ -192,5 +229,6 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
     _running = false;
     _stopRequested = false;
     await logoutSapClient();
+    log.info(`──────────────────────────── pipeline done (${fmtMs(Date.now() - runStart)}) ────────────────────────────`);
   }
 }
