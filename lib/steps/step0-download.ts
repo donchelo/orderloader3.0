@@ -292,15 +292,18 @@ export async function run(): Promise<StepResult> {
       for await (const msg of imapClient.fetch("1:*", {
         uid: true, flags: true, envelope: true, source: true,
       })) {
+        if (config.processUnreadOnly && msg.flags?.has("\\Seen")) continue;
         messages.push(msg);
       }
 
       if (messages.length === 0) {
-        result.detalles.push("No hay correos en INBOX");
+        const motive = config.processUnreadOnly ? "no leídos en INBOX" : "correos en INBOX";
+        result.detalles.push(`No hay ${motive}`);
         return result;
       }
 
-      result.detalles.push(`Revisando INBOX: ${messages.length} correo(s)`);
+      const modeLabel = config.processUnreadOnly ? "no leído(s)" : "correo(s)";
+      result.detalles.push(`Revisando INBOX: ${messages.length} ${modeLabel}`);
 
       for (const msg of messages) {
         try {
