@@ -46,3 +46,5 @@ next-env.d.ts
 # archivos generados en runtime
 server.log
 project.tar.gz
+scratch/flexoimpresos-oc/
+.claude/
