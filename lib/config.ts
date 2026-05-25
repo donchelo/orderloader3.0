@@ -23,6 +23,11 @@ export interface Config {
   // false → procesa todo el inbox sin importar estado (Tamaprint)
   processUnreadOnly: boolean;
 
+  // Microsoft Graph API (solo si emailProvider === "microsoft")
+  msClientId: string;
+  msTenantId: string;
+  msClientSecret: string;
+
   // SMTP
   smtpHost: string;
   smtpPort: number;
@@ -41,11 +46,9 @@ export interface Config {
   receptorKeywords: string[];
 }
 
-const REQUIRED_ENV: [string, string][] = [
+const REQUIRED_ENV_BASE: [string, string][] = [
   ["CRON_SECRET",       "autenticación HTTP Basic Auth"],
-  ["EMAIL_USER",        "acceso IMAP/SMTP"],
-  ["EMAIL_PASS",        "acceso IMAP/SMTP"],
-  ["EMAIL_HOST",        "servidor IMAP"],
+  ["EMAIL_USER",        "buzón de correo (mailbox)"],
   ["NOTIFY_EMAIL",      "envío de notificaciones"],
   ["SAP_B1_URL",        "conexión SAP Business One"],
   ["SAP_B1_USER",       "conexión SAP Business One"],
@@ -54,8 +57,22 @@ const REQUIRED_ENV: [string, string][] = [
   ["ANTHROPIC_API_KEY", "extracción AI de PDFs"],
 ];
 
+const REQUIRED_ENV_IMAP: [string, string][] = [
+  ["EMAIL_PASS",  "acceso IMAP/SMTP"],
+  ["EMAIL_HOST",  "servidor IMAP"],
+];
+
+const REQUIRED_ENV_MICROSOFT: [string, string][] = [
+  ["MS_CLIENT_ID",     "Microsoft Graph API"],
+  ["MS_TENANT_ID",     "Microsoft Graph API"],
+  ["MS_CLIENT_SECRET", "Microsoft Graph API"],
+];
+
 function validateEnv(): void {
-  const missing = REQUIRED_ENV.filter(([key]) => !process.env[key]);
+  const isMicrosoft = process.env.EMAIL_PROVIDER === "microsoft";
+  const providerEnv = isMicrosoft ? REQUIRED_ENV_MICROSOFT : REQUIRED_ENV_IMAP;
+  const all = [...REQUIRED_ENV_BASE, ...providerEnv];
+  const missing = all.filter(([key]) => !process.env[key]);
   if (missing.length === 0) return;
   const lines = missing.map(([key, desc]) => `  - ${key}  (${desc})`).join("\n");
   throw new Error(`OrderLoader: variables de entorno requeridas no configuradas:\n${lines}`);
@@ -96,6 +113,10 @@ export function getConfig(): Config {
     emailHost,
     emailPort: parseInt(process.env.EMAIL_PORT ?? "993"),
     processUnreadOnly: process.env.PROCESS_UNREAD_ONLY === "true",
+
+    msClientId:     process.env.MS_CLIENT_ID     ?? "",
+    msTenantId:     process.env.MS_TENANT_ID     ?? "",
+    msClientSecret: process.env.MS_CLIENT_SECRET ?? "",
 
     smtpHost,
     smtpPort: parseInt(process.env.EMAIL_SMTP_PORT ?? "587"),

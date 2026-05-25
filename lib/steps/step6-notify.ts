@@ -45,24 +45,47 @@ export async function run(): Promise<StepResult> {
     return result;
   }
 
-  if (!config.emailUser || !config.emailPass || !config.smtpHost) {
-    for (const row of rows) {
-      logPipeline(db, String(row.orden_compra), 6, "notify", "ERROR",
-        "Faltan credenciales SMTP — pedido pendiente de notificación");
+  const isMicrosoft = config.emailProvider === "microsoft";
+
+  if (isMicrosoft) {
+    if (!config.emailUser || !config.msClientId || !config.msTenantId || !config.msClientSecret) {
+      for (const row of rows) {
+        logPipeline(db, String(row.orden_compra), 6, "notify", "ERROR",
+          "Faltan credenciales Microsoft Graph — pedido pendiente de notificación");
+      }
+      result.errores = rows.length;
+      result.detalles.push(`✗ Faltan credenciales Microsoft Graph — ${rows.length} pedido(s) sin notificar`);
+      return result;
     }
-    result.errores = rows.length;
-    result.detalles.push(`✗ Faltan credenciales SMTP — ${rows.length} pedido(s) sin notificar`);
-    return result;
+  } else {
+    if (!config.emailUser || !config.emailPass || !config.smtpHost) {
+      for (const row of rows) {
+        logPipeline(db, String(row.orden_compra), 6, "notify", "ERROR",
+          "Faltan credenciales SMTP — pedido pendiente de notificación");
+      }
+      result.errores = rows.length;
+      result.detalles.push(`✗ Faltan credenciales SMTP — ${rows.length} pedido(s) sin notificar`);
+      return result;
+    }
   }
 
   const fecha = new Date().toISOString().split("T")[0];
-  const transporter = nodemailer.createTransport({
+
+  // Para IMAP/SMTP — se inicializa solo si no es Microsoft
+  const transporter = isMicrosoft ? null : nodemailer.createTransport({
     host: config.smtpHost,
     port: config.smtpPort,
     secure: config.smtpPort === 465,
     requireTLS: config.smtpPort !== 465,
     auth: { user: config.emailUser, pass: config.emailPass },
   });
+
+  // Para Microsoft Graph — token compartido por todos los envíos de este run
+  let graphToken: string | null = null;
+  if (isMicrosoft) {
+    const { getAccessToken } = await import("../microsoft-graph");
+    graphToken = await getAccessToken(config.msTenantId, config.msClientId, config.msClientSecret);
+  }
 
   const now = new Date().toISOString();
 
@@ -114,16 +137,31 @@ export async function run(): Promise<StepResult> {
         html = html.replace("</body>", `${nota}</body>`);
       }
 
-      await transporter.sendMail({
-        from: config.emailUser,
-        to: config.notifyEmail,
-        ...(config.notifyCcEmail ? { cc: config.notifyCcEmail } : {}),
-        subject: buildSubjectForOrder(row, hasExtraFiles),
-        html,
-        attachments: [
-          { filename: "logo.png", path: LOGO_PATH, cid: "logo" },
-        ],
-      });
+      if (isMicrosoft && graphToken) {
+        const { sendMailGraph } = await import("../microsoft-graph");
+        let logoBytes = "";
+        try { logoBytes = fs.readFileSync(LOGO_PATH).toString("base64"); } catch { /* sin logo */ }
+        await sendMailGraph(
+          graphToken,
+          config.emailUser,
+          config.notifyEmail,
+          config.notifyCcEmail || undefined,
+          buildSubjectForOrder(row, hasExtraFiles),
+          html,
+          logoBytes ? [{ name: "logo.png", contentType: "image/png", contentBytes: logoBytes, contentId: "logo" }] : []
+        );
+      } else {
+        await transporter!.sendMail({
+          from: config.emailUser,
+          to: config.notifyEmail,
+          ...(config.notifyCcEmail ? { cc: config.notifyCcEmail } : {}),
+          subject: buildSubjectForOrder(row, hasExtraFiles),
+          html,
+          attachments: [
+            { filename: "logo.png", path: LOGO_PATH, cid: "logo" },
+          ],
+        });
+      }
 
       // Marcar que el email fue enviado ANTES de actualizar el estado final.
       // Si el proceso se cae aquí, el próximo run detecta notificacion_enviada=1

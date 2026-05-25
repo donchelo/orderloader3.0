@@ -134,6 +134,68 @@ async function ejecutarTriageIA(
 const STAGING_FOLDER = "INBOX.A A REVISAR IA";
 const SANDRA_FOLDER  = "INBOX.A A SANDRA";
 
+async function recoverPendingMovesMicrosoft(
+  config: ReturnType<typeof getConfig>,
+  db: ReturnType<typeof getDb>,
+  pending: ReturnType<typeof getPendingMoves>
+): Promise<string[]> {
+  const logs: string[] = [];
+  logs.push(`Recovery Microsoft: ${pending.length} movimiento(s) Graph pendiente(s) encontrado(s)`);
+
+  if (!config.msClientId || !config.msTenantId || !config.msClientSecret) {
+    logs.push("⚠ Recovery Microsoft: faltan credenciales MS_CLIENT_ID/MS_TENANT_ID/MS_CLIENT_SECRET");
+    return logs;
+  }
+
+  try {
+    const { getAccessToken, findMessageInInbox, moveMessage } = await import("../microsoft-graph");
+    const token = await getAccessToken(config.msTenantId, config.msClientId, config.msClientSecret);
+
+    for (const pm of pending) {
+      // Caso 1: archivos en disco con move_complete → solo actualizar DB
+      if (pm.carpeta_email) {
+        const metaPath = path.join(pm.carpeta_email, "correo_metadata.json");
+        if (fs.existsSync(metaPath)) {
+          try {
+            const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
+            if (meta.graph_move_complete === true || meta.imap_move_complete === true) {
+              completePendingMove(db, pm.id);
+              logs.push(`↩ Recovery OK (move confirmado en metadata): ${pm.carpeta_email}`);
+              continue;
+            }
+          } catch { /* metadata ilegible */ }
+        }
+      }
+
+      // Caso 2: buscar mensaje en Inbox por internetMessageId y reintentar move
+      if (!pm.message_id) {
+        failPendingMove(db, pm.id);
+        logs.push(`⚠ Recovery FALLIDO (sin message_id): ${pm.carpeta_email ?? pm.id}`);
+        continue;
+      }
+
+      const found = await findMessageInInbox(token, config.emailUser, pm.message_id);
+      if (found) {
+        try {
+          await moveMessage(token, config.emailUser, found.id, pm.carpeta_destino);
+          completePendingMove(db, pm.id);
+          logs.push(`↩ Recovery OK (re-movido desde Inbox): Message-ID=${pm.message_id}`);
+        } catch (e) {
+          logs.push(`⚠ Recovery: no se pudo mover desde Inbox: ${String(e)}`);
+        }
+      } else {
+        // No encontrado en Inbox → asumimos que llegó a staging o se perdió
+        failPendingMove(db, pm.id);
+        logs.push(`⚠ Recovery FALLIDO (no encontrado en Inbox): Message-ID=${pm.message_id}`);
+      }
+    }
+  } catch (e) {
+    logs.push(`⚠ Recovery Microsoft: error de conexión: ${String(e)}`);
+  }
+
+  return logs;
+}
+
 async function moveToSandra(imapClient: ImapFlow, uid: number): Promise<void> {
   try {
     await imapClient.messageMove(String(uid), SANDRA_FOLDER, { uid: true });
@@ -160,6 +222,11 @@ export async function recoverPendingMoves(): Promise<string[]> {
   if (pending.length === 0) return logs;
 
   const config = getConfig();
+
+  if (config.emailProvider === "microsoft") {
+    return recoverPendingMovesMicrosoft(config, db, pending);
+  }
+
   logs.push(`Recovery: ${pending.length} movimiento(s) IMAP pendiente(s) encontrado(s)`);
 
   const imapClient = new ImapFlow({
@@ -253,9 +320,226 @@ export async function recoverPendingMoves(): Promise<string[]> {
   return logs;
 }
 
+async function runMicrosoft(config: ReturnType<typeof getConfig>): Promise<StepResult> {
+  const result: StepResult = { procesados: 0, errores: 0, saltados: 0, detalles: [] };
+
+  if (!config.emailUser || !config.msClientId || !config.msTenantId || !config.msClientSecret) {
+    result.detalles.push("Faltan credenciales Microsoft Graph (MS_CLIENT_ID, MS_TENANT_ID, MS_CLIENT_SECRET)");
+    return result;
+  }
+
+  let clientNits = CLIENT_NITS;
+  let clientKeywords = CLIENT_TEXT_KEYWORDS;
+  try {
+    const lists = loadClientListsFromDb(getDb());
+    if (lists.nits.length > 0) { clientNits = lists.nits; clientKeywords = lists.keywords; }
+  } catch { /* DB podría no existir aún */ }
+
+  try {
+    const {
+      getAccessToken, getOrCreateInboxChildFolder,
+      listInboxMessages, getMessageWithAttachments,
+      moveMessage: graphMove, markAsRead,
+    } = await import("../microsoft-graph");
+
+    const token = await getAccessToken(config.msTenantId, config.msClientId, config.msClientSecret);
+    const stagingFolderId = await getOrCreateInboxChildFolder(token, config.emailUser, "A A REVISAR IA");
+    const sandraFolderId  = await getOrCreateInboxChildFolder(token, config.emailUser, "A A SANDRA");
+
+    const messages = await listInboxMessages(token, config.emailUser, config.processUnreadOnly);
+    if (messages.length === 0) {
+      result.detalles.push(`No hay ${config.processUnreadOnly ? "no leídos en INBOX" : "correos en INBOX"}`);
+      return result;
+    }
+    result.detalles.push(`Revisando INBOX: ${messages.length} ${config.processUnreadOnly ? "no leído(s)" : "correo(s)"}`);
+
+    const createdFolders = new Set<string>();
+
+    for (const msg of messages) {
+      try {
+        const subject    = msg.subject ?? "Sin asunto";
+        const sender     = msg.from?.emailAddress?.address ?? "";
+        const dateHeader = msg.receivedDateTime ?? new Date().toISOString();
+
+        if (subject.includes("[OrderLoader]")) {
+          result.detalles.push(`INBOX (notif OrderLoader): "${subject}"`);
+          continue;
+        }
+
+        const fullMsg          = await getMessageWithAttachments(token, config.emailUser, msg.id);
+        const internetMsgId    = fullMsg.internetMessageId ?? "";
+        const parsedText       = fullMsg.body?.contentType === "text"
+          ? (fullMsg.body.content ?? "")
+          : (fullMsg.body?.content?.replace(/<[^>]+>/g, " ") ?? "");
+
+        const pdfAttachments:   AttachmentInfo[] = [];
+        const otherAttachments: AttachmentInfo[] = [];
+
+        for (const att of fullMsg.attachments ?? []) {
+          if (att["@odata.type"] !== "#microsoft.graph.fileAttachment" || !att.name || !att.contentBytes) continue;
+          const safeName = clean(att.name) || "adjunto";
+          const content  = Buffer.from(att.contentBytes, "base64");
+          const info: AttachmentInfo = { filename: safeName, content };
+          if (safeName.toLowerCase().endsWith(".pdf")) pdfAttachments.push(info);
+          else otherAttachments.push(info);
+        }
+
+        if (pdfAttachments.length === 0) {
+          await graphMove(token, config.emailUser, msg.id, sandraFolderId);
+          result.saltados++;
+          result.detalles.push(`SANDRA (sin PDF): "${subject}" de ${sender}`);
+          continue;
+        }
+
+        const pdfTexts    = new Map<string, string>();
+        const clasificados = await clasificarPdfs(pdfAttachments, clientNits, clientKeywords, config.receptorKeywords, pdfTexts);
+
+        const triageResponse = await ejecutarTriageIA(clasificados, otherAttachments, pdfTexts, clientNits, subject);
+        const triageResults  = triageResponse?.results ?? null;
+
+        const finalClasificados = clasificados.map(pdf => {
+          const ia = triageResults?.find(r => r.filename === pdf.filename);
+          if (!ia) return pdf;
+          if (pdf.detectionMethod === "nit") {
+            if (!pdf.isApprovedOC && ia.tipo === "orden_compra") return { ...pdf, isApprovedOC: true };
+            return pdf;
+          }
+          if (pdf.detectionMethod === "keyword") {
+            if (ia.tipo !== "orden_compra") return { ...pdf, isApprovedOC: false };
+            if (ia.cliente && ia.cliente !== pdf.client) return { ...pdf, client: ia.cliente, isApprovedOC: pdf.isTamaprint };
+          }
+          if (pdf.detectionMethod === null && ia.tipo === "orden_compra" && ia.cliente) {
+            const clientExists = clientNits.some(c => c.carpeta === ia.cliente);
+            if (clientExists) return { ...pdf, client: ia.cliente, isApprovedOC: true };
+          }
+          return pdf;
+        });
+
+        const approvedPdfs = finalClasificados.filter(p => p.isApprovedOC);
+        if (approvedPdfs.length === 0) {
+          await graphMove(token, config.emailUser, msg.id, sandraFolderId);
+          result.saltados++;
+          result.detalles.push(`SANDRA (ningún PDF es OC aprobada): "${subject}" de ${sender}`);
+          continue;
+        }
+
+        const nonSignatureOthers = otherAttachments.filter(att => {
+          const ia = triageResults?.find(r => r.filename === att.filename);
+          return ia ? ia.tipo !== "firma_logo" : true;
+        });
+        const hasExtraFiles = (approvedPdfs.length < pdfAttachments.length) || nonSignatureOthers.length > 0;
+
+        const client_folder = approvedPdfs[0].client!;
+        const ts = new Date().toISOString().replace(/[-:T]/g, c => c === "T" ? "_" : c).split(".")[0];
+        let folderName = `${ts}_${clean(subject).slice(0, 50) || "sin_asunto"}`;
+        let idx = 1;
+        while (createdFolders.has(folderName)) {
+          folderName = `${ts}_${clean(subject).slice(0, 50)}_${String(idx).padStart(2, "0")}`;
+          idx++;
+        }
+        createdFolders.add(folderName);
+
+        const pedidoPath = path.join(config.pedidosRawDir, client_folder, folderName);
+        fs.mkdirSync(pedidoPath, { recursive: true });
+
+        const bodyText = `De: ${sender}\nAsunto: ${subject}\nFecha: ${dateHeader}\n\n${parsedText}`;
+        fs.writeFileSync(path.join(pedidoPath, "correo_original.txt"), bodyText, "utf8");
+
+        for (const att of [...pdfAttachments, ...otherAttachments]) {
+          fs.writeFileSync(path.join(pedidoPath, att.filename), att.content);
+        }
+
+        const approvedNames = approvedPdfs.map(p => p.filename).join(", ");
+        const extraNames    = [
+          ...finalClasificados.filter(p => !p.isApprovedOC).map(p => p.filename),
+          ...nonSignatureOthers.map(a => a.filename),
+        ].join(", ");
+
+        const metadataBase = {
+          from: sender, subject, date: dateHeader, client: client_folder,
+          folder_local: `pedidos/raw/${client_folder}/${folderName}`,
+          // IMAP fields null para provider microsoft
+          imap_uid: null,
+          imap_staging_folder: null,
+          imap_move_complete: false,
+          // Graph fields
+          message_id: internetMsgId,
+          graph_message_id: msg.id,
+          graph_staging_folder_id: stagingFolderId,
+          graph_move_complete: false,
+          n_adjuntos_pdf: approvedPdfs.length,
+          has_extra_files: hasExtraFiles,
+          pdfs_aprobados: approvedNames,
+          ...(hasExtraFiles ? { archivos_extra: extraNames } : {}),
+          ...(triageResults ? { triage_ia: triageResults } : {}),
+          ts_download: new Date().toISOString(),
+        };
+        fs.writeFileSync(path.join(pedidoPath, "correo_metadata.json"), JSON.stringify(metadataBase, null, 2), "utf8");
+        fs.writeFileSync(path.join(pedidoPath, "estado_pipeline.json"), JSON.stringify({ fase: 0, estado: "DESCARGADO", ts: new Date().toISOString() }, null, 2), "utf8");
+
+        let pendingMoveId: number | null = null;
+        try {
+          pendingMoveId = insertPendingMove(getDb(), internetMsgId, 0, "Inbox", stagingFolderId, pedidoPath);
+        } catch { /* DB podría no estar disponible aún */ }
+
+        let newGraphMessageId = msg.id;
+        let graphMoveOk = false;
+        try {
+          const moved = await graphMove(token, config.emailUser, msg.id, stagingFolderId);
+          newGraphMessageId = moved.id;
+          graphMoveOk = true;
+        } catch {
+          try { await markAsRead(token, config.emailUser, msg.id); } catch { /* ignorar */ }
+        }
+
+        fs.writeFileSync(
+          path.join(pedidoPath, "correo_metadata.json"),
+          JSON.stringify({ ...metadataBase, graph_message_id: newGraphMessageId, graph_move_complete: graphMoveOk, imap_move_complete: graphMoveOk }, null, 2),
+          "utf8"
+        );
+
+        try {
+          const db = getDb();
+          logPipeline(db, folderName, 0, "download", "OK",
+            `Graph cliente=${client_folder} PDFs_OC=${approvedPdfs.length} extras=${hasExtraFiles}`);
+          if (triageResponse) {
+            logPipeline(db, folderName, 0, "triage", "OK",
+              `adjuntos=${clasificados.length + otherAttachments.length}`,
+              triageResponse.inputTokens, triageResponse.outputTokens, TRIAGE_MODEL);
+          }
+          if (pendingMoveId !== null && graphMoveOk) completePendingMove(db, pendingMoveId);
+        } catch { /* DB might not exist yet */ }
+
+        result.procesados++;
+        const triageMsg = triageResults
+          ? ` [triage IA: ${triageResults.map(r => `${r.filename}→${r.tipo}`).join(", ")}]`
+          : " [triage IA: no disponible]";
+        const extraMsg = hasExtraFiles ? ` ⚠ archivos extras: ${extraNames}` : "";
+        result.detalles.push(`OK: pedidos/raw/${client_folder}/${folderName} (${approvedPdfs.length} OC PDF)${extraMsg}${triageMsg}`);
+
+        break; // un solo pedido por llamada
+      } catch (e) {
+        result.errores++;
+        result.detalles.push(`ERROR en mensaje: ${String(e)}`);
+      }
+    }
+
+    if (result.procesados === 0 && result.saltados === 0 && result.errores === 0) {
+      result.detalles.push("No hay pedidos pendientes en INBOX (solo notificaciones OrderLoader)");
+    }
+  } catch (e) {
+    result.errores++;
+    result.detalles.push(`Error de conexión Microsoft Graph: ${String(e)}`);
+  }
+
+  return result;
+}
+
 export async function run(): Promise<StepResult> {
   const config = getConfig();
   ensureWorkspaceDirs();
+
+  if (config.emailProvider === "microsoft") return runMicrosoft(config);
 
   const result: StepResult = { procesados: 0, errores: 0, saltados: 0, detalles: [] };
 

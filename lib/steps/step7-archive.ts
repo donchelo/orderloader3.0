@@ -53,7 +53,14 @@ function isLimpio(row: Record<string, unknown>): boolean {
   return true;
 }
 
-type MoveJob = { uid: number; messageId?: string; source: string; dest: string };
+type MoveJob = {
+  uid: number;
+  messageId?: string;
+  source: string;
+  dest: string;
+  graphMessageId?: string;
+  graphDestFolderName?: string;
+};
 
 /** Lee todos los correo_metadata.json bajo pedidosRawDir y agrupa UIDs por orden_compra.
  *
@@ -64,8 +71,8 @@ type MoveJob = { uid: number; messageId?: string; source: string; dest: string }
  */
 function collectStagingUids(
   pedidosRawDir: string
-): Map<string, { uid: number; messageId?: string; hasExtraFiles: boolean; source: string }[]> {
-  const byOC = new Map<string, { uid: number; messageId?: string; hasExtraFiles: boolean; source: string }[]>();
+): Map<string, { uid: number; messageId?: string; hasExtraFiles: boolean; source: string; graphMessageId?: string }[]> {
+  const byOC = new Map<string, { uid: number; messageId?: string; hasExtraFiles: boolean; source: string; graphMessageId?: string }[]>();
   if (!fs.existsSync(pedidosRawDir)) return byOC;
 
   for (const cliente of fs.readdirSync(pedidosRawDir)) {
@@ -78,11 +85,13 @@ function collectStagingUids(
       if (!fs.existsSync(metaPath)) continue;
       try {
         const meta = JSON.parse(fs.readFileSync(metaPath, "utf8"));
-        if (!meta.imap_uid || !meta.imap_staging_folder) continue;
-        const uid           = Number(meta.imap_uid);
-        const source        = String(meta.imap_staging_folder);
+        const isGraph = meta.graph_message_id && !meta.imap_uid;
+        if (!meta.imap_uid && !meta.graph_message_id) continue;
+        const uid           = Number(meta.imap_uid ?? 0);
+        const source        = String(meta.imap_staging_folder ?? "A A REVISAR IA");
         const messageId     = meta.message_id as string | undefined;
         const hasExtraFiles = meta.has_extra_files === true;
+        const graphMessageId = isGraph ? String(meta.graph_message_id) : undefined;
         const ocs           = new Set<string>();
 
         for (const entry of fs.readdirSync(carpetaPath)) {
@@ -107,13 +116,52 @@ function collectStagingUids(
 
         for (const oc of ocs) {
           const list = byOC.get(oc) ?? [];
-          list.push({ uid, messageId, hasExtraFiles, source });
+          list.push({ uid, messageId, hasExtraFiles, source, graphMessageId });
           byOC.set(oc, list);
         }
       } catch { /* skip */ }
     }
   }
   return byOC;
+}
+
+async function moveInGraph(
+  config: ReturnType<typeof getConfig>,
+  moveJobs: MoveJob[],
+  detalles: string[]
+): Promise<void> {
+  const jobsToMove = moveJobs.filter(j => j.graphMessageId && j.graphDestFolderName && j.graphDestFolderName !== "A A REVISAR IA");
+  if (!jobsToMove.length) return;
+
+  if (!config.msClientId || !config.msTenantId || !config.msClientSecret) {
+    detalles.push("⚠ Faltan credenciales Microsoft Graph para archivar correos");
+    return;
+  }
+
+  try {
+    const { getAccessToken, getOrCreateInboxChildFolder, moveMessage } = await import("../microsoft-graph");
+    const token = await getAccessToken(config.msTenantId, config.msClientId, config.msClientSecret);
+
+    // Resolver IDs de carpetas de destino
+    const folderIds = new Map<string, string>();
+    const folderNames = [...new Set(jobsToMove.map(j => j.graphDestFolderName!))];
+    for (const name of folderNames) {
+      folderIds.set(name, await getOrCreateInboxChildFolder(token, config.emailUser, name));
+    }
+
+    for (const job of jobsToMove) {
+      const destId = folderIds.get(job.graphDestFolderName!);
+      if (!destId || !job.graphMessageId) continue;
+      try {
+        await moveMessage(token, config.emailUser, job.graphMessageId, destId);
+        detalles.push(`✓ Correo Graph → ${job.graphDestFolderName}`);
+      } catch (e) {
+        detalles.push(`⚠ No se pudo mover Graph a ${job.graphDestFolderName}: ${String(e).slice(0, 100)}`);
+      }
+    }
+  } catch (e) {
+    detalles.push(`⚠ Error Graph archive: ${String(e).slice(0, 100)}`);
+  }
 }
 
 async function moveInImap(
@@ -209,20 +257,30 @@ export async function run(): Promise<StepResult> {
     const carpeta = row.carpeta_origen as string | null;
     if (!carpeta) continue;
     try {
-      const meta      = JSON.parse(fs.readFileSync(path.join(carpeta, "correo_metadata.json"), "utf8"));
-      if (!meta.imap_uid) continue;
-      const uid       = Number(meta.imap_uid);
-      const messageId = meta.message_id as string | undefined;
-      const src       = meta.imap_staging_folder ?? SOURCE_FOLDER;
-      const dest      = isLimpio(row)
+      const meta           = JSON.parse(fs.readFileSync(path.join(carpeta, "correo_metadata.json"), "utf8"));
+      const isGraph        = meta.graph_message_id && !meta.imap_uid;
+      if (!meta.imap_uid && !meta.graph_message_id) continue;
+      const uid            = Number(meta.imap_uid ?? 0);
+      const messageId      = meta.message_id as string | undefined;
+      const graphMessageId = isGraph ? String(meta.graph_message_id) : undefined;
+      const src            = meta.imap_staging_folder ?? SOURCE_FOLDER;
+      const destImap       = isLimpio(row)
         ? (meta.has_extra_files === true ? DEST_SANDRA : DEST_OK)
         : DEST_REVISAR;
-      moveJobs.push({ uid, messageId, source: src, dest });
-      destByOrden[String(row.orden_compra)] = dest;
+      // Para Graph, solo los nombres "cortos" sin prefijo INBOX.
+      const destName       = isLimpio(row)
+        ? (meta.has_extra_files === true ? "A A SANDRA" : "A B INGRESADO")
+        : "A A REVISAR IA";
+      moveJobs.push({ uid, messageId, source: src, dest: destImap, graphMessageId, graphDestFolderName: destName });
+      destByOrden[String(row.orden_compra)] = destImap;
     } catch { /* metadata no disponible */ }
   }
 
-  await moveInImap(config, moveJobs, result.detalles);
+  if (config.emailProvider === "microsoft") {
+    await moveInGraph(config, moveJobs, result.detalles);
+  } else {
+    await moveInImap(config, moveJobs, result.detalles);
+  }
 
   // Marcar CERRADO en DB
   if (pendientes.length > 0) {
@@ -254,16 +312,19 @@ export async function run(): Promise<StepResult> {
       for (const [oc, entries] of stagingByOC.entries()) {
         const row = cerradoMap.get(oc);
         if (!row) continue;
-        for (const { uid, messageId, hasExtraFiles, source } of entries) {
-          const dest = isLimpio(row)
-            ? (hasExtraFiles ? DEST_SANDRA : DEST_OK)
-            : DEST_REVISAR;
-          orphanJobs.push({ uid, messageId, source, dest });
+        for (const { uid, messageId, hasExtraFiles, source, graphMessageId } of entries) {
+          const dest     = isLimpio(row) ? (hasExtraFiles ? DEST_SANDRA : DEST_OK) : DEST_REVISAR;
+          const destName = isLimpio(row) ? (hasExtraFiles ? "A A SANDRA" : "A B INGRESADO") : "A A REVISAR IA";
+          orphanJobs.push({ uid, messageId, source, dest, graphMessageId, graphDestFolderName: destName });
         }
       }
 
       if (orphanJobs.length > 0) {
-        await moveInImap(config, orphanJobs, result.detalles);
+        if (config.emailProvider === "microsoft") {
+          await moveInGraph(config, orphanJobs, result.detalles);
+        } else {
+          await moveInImap(config, orphanJobs, result.detalles);
+        }
         result.detalles.push(`✓ ${orphanJobs.length} correo(s) huérfano(s) archivados`);
         result.saltados += orphanJobs.length;
       }
