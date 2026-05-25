@@ -346,9 +346,7 @@ export function updateCliente(db: Database.Database, id: number, data: {
 
 export function ensureWorkspaceDirs(): void {
   const config = getConfig();
-  for (const client of ["Hermeco", "Comodin", "Exito", "Otros"]) {
-    fs.mkdirSync(path.join(config.pedidosRawDir, client), { recursive: true });
-  }
+  fs.mkdirSync(config.pedidosRawDir, { recursive: true });
   fs.mkdirSync(config.pedidosBackupsDir, { recursive: true });
   fs.mkdirSync(config.pedidosReportsDir, { recursive: true });
 }
