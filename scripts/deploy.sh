@@ -1,15 +1,23 @@
 #!/bin/bash
 set -e
 
-echo "🚀 Desplegando OrderLoader en Docker local..."
+TENANT=${1:-tamaprint}
 
 cd "$(dirname "$0")/.."
 
-echo "🐳 Construyendo imagen y reiniciando contenedor..."
-docker compose up -d --build --remove-orphans
+if [ "$TENANT" = "flexoimpresos" ]; then
+  COMPOSE_FILE="docker-compose.flexoimpresos.yml"
+  PORT=3001
+else
+  COMPOSE_FILE="docker-compose.yml"
+  PORT=3000
+fi
+
+echo "Desplegando OrderLoader [$TENANT] en Docker..."
+docker compose -f "$COMPOSE_FILE" up -d --build --remove-orphans
 
 echo ""
-echo "✅ Contenedor corriendo:"
+echo "Contenedores corriendo:"
 docker ps --filter name=orderloader --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 echo ""
-echo "📊 Dashboard: http://localhost:3000"
+echo "Dashboard: http://localhost:$PORT"
