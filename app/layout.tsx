@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
+import { VersionTag } from "@/components/VersionTag";
 
 const redHatDisplay = localFont({
   src: [
@@ -44,7 +45,10 @@ export default function RootLayout({
       lang="es"
       className={`${redHatDisplay.variable} ${nectoMono.variable} h-full antialiased`}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        {children}
+        <VersionTag />
+      </body>
     </html>
   );
 }
