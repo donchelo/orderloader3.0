@@ -4,6 +4,7 @@
  */
 import type Database from "better-sqlite3";
 import { CLIENT_NITS, CLIENT_TEXT_KEYWORDS } from "./pdf-classify";
+import { getConfig } from "./config";
 import {
   PROMPT_COMODIN, PROMPT_EXITO, PROMPT_HERMECO, PROMPT_EUROCORSETT,
   PROMPT_INDUSTRIASCORY, PROMPT_ESTUDIOMODA, PROMPT_PINTURAS_PRIME,
@@ -31,24 +32,6 @@ const PROMPTS_BY_CARPETA: Record<string, string> = {
   LaimaSas:         PROMPT_LAIMA,
 };
 
-const CARD_CODES: Record<string, string> = {
-  "890924167": "CN890924167",
-  "800069933": "CN800069933",
-  "890900608": "CN890900608",
-  "811032857": "CN811032857",
-  "800131750": "CN800131750",
-  "890926803": "CN890926803",
-  "800194203": "CN800194203",
-  "900426666": "CN900426666",
-  "800227956": "CN800227956",
-  "900690157": "CN900690157",
-  "890932892": "CN890932892",
-  "900445797": "CN900445797",
-  "811042428": "CN811042428",
-  "900447263": "CN900447263",
-  "805018724": "CN805018724",
-  "900461923": "CN900461923",
-};
 
 const KEYWORDS_BY_CARPETA: Record<string, string[]> = Object.fromEntries(
   CLIENT_TEXT_KEYWORDS.map(({ carpeta, keywords }) => [carpeta, keywords])
@@ -75,7 +58,7 @@ export function seedClientes(db: Database.Database): { inserted: number } {
         nit_principal,
         nits_json:     JSON.stringify(nits),
         keywords_json: JSON.stringify(KEYWORDS_BY_CARPETA[carpeta] ?? []),
-        card_code:     CARD_CODES[nit_principal] ?? `CN${nit_principal}`,
+        card_code:     `${getConfig().cardCodePrefix}${nit_principal}`,
         prompt:        PROMPTS_BY_CARPETA[carpeta] ?? "",
       });
       inserted += result.changes;

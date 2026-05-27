@@ -43,7 +43,11 @@ export interface Config {
 
   // Tenant
   tenant: Tenant;
+  tenantDisplayName: string;
   receptorKeywords: string[];
+  stagingFolderName: string;
+  manualReviewFolderName: string;
+  cardCodePrefix: string;
 }
 
 const REQUIRED_ENV_BASE: [string, string][] = [
@@ -133,9 +137,14 @@ export function getConfig(): Config {
     sapCompany: process.env.SAP_B1_COMPANY ?? "",
 
     tenant: (process.env.TENANT ?? "tamaprint") as Tenant,
+    tenantDisplayName: process.env.TENANT === "flexoimpresos" ? "Flexo Impresos" : "Tamaprint",
+    stagingFolderName:      process.env.STAGING_FOLDER_NAME       ?? "A A REVISAR IA",
+    manualReviewFolderName: process.env.MANUAL_REVIEW_FOLDER_NAME ?? "A A SANDRA",
     receptorKeywords: process.env.TENANT === "flexoimpresos"
       ? FLEXO_RECEPTOR_KEYWORDS
       : TAMAPRINT_RECEPTOR_KEYWORDS,
+    cardCodePrefix: process.env.CARD_CODE_PREFIX
+      ?? (process.env.TENANT === "flexoimpresos" ? "C" : "CN"),
   };
 
   return _config;

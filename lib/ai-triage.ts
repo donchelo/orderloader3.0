@@ -35,15 +35,15 @@ export interface TriageResult {
   razon: string;
 }
 
-function buildSystemPrompt(clientNits: ClientNitList): string {
-  return `Eres un agente de triage para Tamaprint, empresa colombiana de impresión.
+function buildSystemPrompt(clientNits: ClientNitList, companyName: string): string {
+  return `Eres un agente de triage para ${companyName}, empresa colombiana de impresión.
 Tu tarea: clasificar cada adjunto de un correo de pedidos.
 
 CLIENTES APROBADOS (NIT | nombre | carpeta):
 ${clientNits.map(c => `  ${c.nits[0]} | ${c.nombre ?? c.carpeta} | ${c.carpeta}`).join('\n')}
 
 TIPOS DE CLASIFICACIÓN:
-- "orden_compra": orden de compra dirigida a Tamaprint, de un cliente aprobado
+- "orden_compra": orden de compra dirigida a ${companyName}, de un cliente aprobado
 - "firma_logo": firma de email, logo corporativo, imagen decorativa — NO es un documento
 - "documento_relevante": documento real que NO es una OC (cotización, especificación, nota)
 - "desconocido": no se puede determinar
@@ -71,6 +71,7 @@ export async function triageEmailAttachments(
   attachments: AttachmentForTriage[],
   clientNits: ClientNitList = CLIENT_NITS,
   emailSubject?: string,
+  companyName = "Tamaprint",
 ): Promise<TriageResponse | null> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return null;
@@ -156,7 +157,7 @@ export async function triageEmailAttachments(
       model: TRIAGE_MODEL,
       max_tokens: 1024,
       temperature: 0,
-      system: buildSystemPrompt(clientNits),
+      system: buildSystemPrompt(clientNits, companyName),
       messages: [{ role: 'user', content: contentBlocks }],
     }));
 

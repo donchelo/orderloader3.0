@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { getDb, getClienteByNit } from "@/lib/db";
+import { getConfig } from "@/lib/config";
 import { detectClientFromPdf, loadClientListsFromDb } from "@/lib/pdf-classify";
 import { pdfToImages, buildVisionContent } from "@/lib/pdf-vision";
 import { withAnthropicRetry } from "@/lib/anthropic-retry";
 
-const META_PROMPT = `You are an expert at creating purchase order extraction prompts for Claude AI.
+function buildMetaPrompt(companyName: string, cardCodePrefix: string): string {
+  return `You are an expert at creating purchase order extraction prompts for Claude AI.
 
-Analyze the provided purchase order PDF from a Colombian company (supplier of Tamaprint, a Colombian printing company).
+Analyze the provided purchase order PDF from a Colombian company (supplier of ${companyName}, a Colombian printing company).
 
 Extract the following information and generate a complete client configuration.
 
@@ -18,7 +20,7 @@ Return ONLY valid JSON in this exact format — no explanations, no markdown:
   "nit": "Tax ID digits only, no dots, no verification digit (e.g. 800069933)",
   "keywords": ["3-6 unique identifiers: brand names, domain names, NIT with dots variant"],
   "number_format": "colombian or american",
-  "card_code": "CN followed by the NIT (e.g. CN800069933)",
+  "card_code": "${cardCodePrefix} followed by the NIT (e.g. ${cardCodePrefix}800069933)",
   "prompt": "Complete extraction prompt — see template below"
 }
 
@@ -126,6 +128,7 @@ Fill in ALL placeholders [LIKE THIS] in the template based on what you see in th
 Replace [CARD_CODE_HERE] with the actual card_code you identified.
 In section 3: keep ONLY the number format block that matches this document (colombian or american), delete the other block entirely. Fill in with specific examples from THIS document.
 The resulting prompt field must be complete, self-contained, and ready to use — no placeholders remaining.`;
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -179,6 +182,8 @@ export async function POST(req: NextRequest) {
     const visionContent = buildVisionContent(pages.slice(0, 4));
 
     const client = new Anthropic({ apiKey });
+    const { tenantDisplayName, cardCodePrefix } = getConfig();
+    const metaPrompt = buildMetaPrompt(tenantDisplayName, cardCodePrefix);
 
     // Intentar modelos en orden de preferencia — si uno está saturado (529), pasar al siguiente
     const MODELS_FALLBACK = ["claude-sonnet-4-6", "claude-haiku-4-5-20251001"];
@@ -191,7 +196,7 @@ export async function POST(req: NextRequest) {
           model,
           max_tokens: 8192,
           temperature: 0,
-          system:   META_PROMPT,
+          system:   metaPrompt,
           messages: [{ role: "user", content: visionContent }],
         }));
         console.log(`[analizar-pdf] Modelo usado: ${model}`);

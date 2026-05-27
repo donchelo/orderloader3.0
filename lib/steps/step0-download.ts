@@ -48,7 +48,7 @@ interface PdfClassification {
   filename: string;
   content: Buffer;
   client: string | null;
-  isTamaprint: boolean;
+  isDirigidoAEmpresa: boolean;
   isApprovedOC: boolean;
   detectionMethod: 'nit' | 'keyword' | null;
 }
@@ -67,18 +67,18 @@ async function clasificarPdfs(
     try {
       const { text } = await pdfParseFn(pdf.content);
       if (textsOut) textsOut.set(pdf.filename, text);
-      const detection   = detectClientFromPdf(text, clientNits, clientKeywords);
-      const isTamaprint = esDirigidoAEmpresa(text, receptorKeywords);
+      const detection          = detectClientFromPdf(text, clientNits, clientKeywords);
+      const isDirigidoAEmpresa = esDirigidoAEmpresa(text, receptorKeywords);
       results.push({
         filename: pdf.filename,
         content:  pdf.content,
         client:   detection?.carpeta ?? null,
-        isTamaprint,
-        isApprovedOC: detection !== null && isTamaprint,
+        isDirigidoAEmpresa,
+        isApprovedOC: detection !== null && isDirigidoAEmpresa,
         detectionMethod: detection?.metodo ?? null,
       });
     } catch {
-      results.push({ filename: pdf.filename, content: pdf.content, client: null, isTamaprint: false, isApprovedOC: false, detectionMethod: null });
+      results.push({ filename: pdf.filename, content: pdf.content, client: null, isDirigidoAEmpresa: false, isApprovedOC: false, detectionMethod: null });
     }
   }
   return results;
@@ -101,6 +101,7 @@ async function ejecutarTriageIA(
   pdfTexts: Map<string, string>,
   clientNits: Array<{ carpeta: string; nits: string[] }> = CLIENT_NITS,
   emailSubject?: string,
+  companyName = "Tamaprint",
 ): Promise<{ results: TriageResult[]; inputTokens: number; outputTokens: number } | null> {
   const attachments: AttachmentForTriage[] = [];
 
@@ -128,11 +129,9 @@ async function ejecutarTriageIA(
     }
   }
 
-  return triageEmailAttachments(attachments, clientNits, emailSubject);
+  return triageEmailAttachments(attachments, clientNits, emailSubject, companyName);
 }
 
-const STAGING_FOLDER = "INBOX.A A REVISAR IA";
-const SANDRA_FOLDER  = "INBOX.A A SANDRA";
 
 async function recoverPendingMovesMicrosoft(
   config: ReturnType<typeof getConfig>,
@@ -196,9 +195,9 @@ async function recoverPendingMovesMicrosoft(
   return logs;
 }
 
-async function moveToSandra(imapClient: ImapFlow, uid: number): Promise<void> {
+async function moveToSandra(imapClient: ImapFlow, uid: number, sandraFolder: string): Promise<void> {
   try {
-    await imapClient.messageMove(String(uid), SANDRA_FOLDER, { uid: true });
+    await imapClient.messageMove(String(uid), sandraFolder, { uid: true });
   } catch {
     try { await imapClient.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignorar */ }
   }
@@ -343,8 +342,8 @@ async function runMicrosoft(config: ReturnType<typeof getConfig>): Promise<StepR
     } = await import("../microsoft-graph");
 
     const token = await getAccessToken(config.msTenantId, config.msClientId, config.msClientSecret);
-    const stagingFolderId = await getOrCreateInboxChildFolder(token, config.emailUser, "A A REVISAR IA");
-    const sandraFolderId  = await getOrCreateInboxChildFolder(token, config.emailUser, "A A SANDRA");
+    const stagingFolderId = await getOrCreateInboxChildFolder(token, config.emailUser, config.stagingFolderName);
+    const sandraFolderId  = await getOrCreateInboxChildFolder(token, config.emailUser, config.manualReviewFolderName);
 
     const messages = await listInboxMessages(token, config.emailUser, config.processUnreadOnly);
     if (messages.length === 0) {
@@ -394,7 +393,7 @@ async function runMicrosoft(config: ReturnType<typeof getConfig>): Promise<StepR
         const pdfTexts    = new Map<string, string>();
         const clasificados = await clasificarPdfs(pdfAttachments, clientNits, clientKeywords, config.receptorKeywords, pdfTexts);
 
-        const triageResponse = await ejecutarTriageIA(clasificados, otherAttachments, pdfTexts, clientNits, subject);
+        const triageResponse = await ejecutarTriageIA(clasificados, otherAttachments, pdfTexts, clientNits, subject, config.tenantDisplayName);
         const triageResults  = triageResponse?.results ?? null;
 
         const finalClasificados = clasificados.map(pdf => {
@@ -406,7 +405,7 @@ async function runMicrosoft(config: ReturnType<typeof getConfig>): Promise<StepR
           }
           if (pdf.detectionMethod === "keyword") {
             if (ia.tipo !== "orden_compra") return { ...pdf, isApprovedOC: false };
-            if (ia.cliente && ia.cliente !== pdf.client) return { ...pdf, client: ia.cliente, isApprovedOC: pdf.isTamaprint };
+            if (ia.cliente && ia.cliente !== pdf.client) return { ...pdf, client: ia.cliente, isApprovedOC: pdf.isDirigidoAEmpresa };
           }
           if (pdf.detectionMethod === null && ia.tipo === "orden_compra" && ia.cliente) {
             const clientExists = clientNits.some(c => c.carpeta === ia.cliente);
@@ -566,8 +565,10 @@ export async function run(): Promise<StepResult> {
 
   try {
     await imapClient.connect();
-    await imapClient.mailboxCreate(SANDRA_FOLDER).catch(() => {});
-    await imapClient.mailboxCreate(STAGING_FOLDER).catch(() => {});
+    const imapSandraFolder  = `INBOX.${config.manualReviewFolderName}`;
+    const imapStagingFolder = `INBOX.${config.stagingFolderName}`;
+    await imapClient.mailboxCreate(imapSandraFolder).catch(() => {});
+    await imapClient.mailboxCreate(imapStagingFolder).catch(() => {});
 
     const lock = await imapClient.getMailboxLock("INBOX");
     const createdFolders = new Set<string>();
@@ -628,7 +629,7 @@ export async function run(): Promise<StepResult> {
 
           // ── 3. Sin PDFs → Sandra ───────────────────────────────────────────────
           if (pdfAttachments.length === 0) {
-            await moveToSandra(imapClient, msg.uid);
+            await moveToSandra(imapClient, msg.uid, imapSandraFolder);
             result.saltados++;
             result.detalles.push(`SANDRA (sin PDF): "${subject}" de ${sender}`);
             continue;
@@ -639,7 +640,7 @@ export async function run(): Promise<StepResult> {
           const clasificados = await clasificarPdfs(pdfAttachments, clientNits, clientKeywords, config.receptorKeywords, pdfTexts);
 
           // ── 5. Triage IA: confirma cliente y filtra firmas/logos ──────────────
-          const triageResponse = await ejecutarTriageIA(clasificados, otherAttachments, pdfTexts, clientNits, subject);
+          const triageResponse = await ejecutarTriageIA(clasificados, otherAttachments, pdfTexts, clientNits, subject, config.tenantDisplayName);
           const triageResults: TriageResult[] | null = triageResponse?.results ?? null;
 
           // Ajustar clasificación de PDFs según IA
@@ -664,7 +665,7 @@ export async function run(): Promise<StepResult> {
               }
               // Si la IA identifica un cliente diferente, usar el de la IA si existe en lista aprobada
               if (ia.cliente && ia.cliente !== pdf.client) {
-                return { ...pdf, client: ia.cliente, isApprovedOC: pdf.isTamaprint };
+                return { ...pdf, client: ia.cliente, isApprovedOC: pdf.isDirigidoAEmpresa };
               }
             }
 
@@ -682,7 +683,7 @@ export async function run(): Promise<StepResult> {
           const approvedPdfs = finalClasificados.filter(p => p.isApprovedOC);
 
           if (approvedPdfs.length === 0) {
-            await moveToSandra(imapClient, msg.uid);
+            await moveToSandra(imapClient, msg.uid, imapSandraFolder);
             result.saltados++;
             result.detalles.push(`SANDRA (ningún PDF es OC aprobada): "${subject}" de ${sender}`);
             continue;
@@ -746,7 +747,7 @@ export async function run(): Promise<StepResult> {
             folder_local: `pedidos/raw/${client_folder}/${folderName}`,
             imap_uid: msg.uid,
             message_id: messageId,
-            imap_staging_folder: STAGING_FOLDER,
+            imap_staging_folder: imapStagingFolder,
             n_adjuntos_pdf: approvedPdfs.length,
             has_extra_files: hasExtraFiles,
             pdfs_aprobados: approvedNames,
@@ -771,14 +772,14 @@ export async function run(): Promise<StepResult> {
           let pendingMoveId: number | null = null;
           try {
             const db = getDb();
-            pendingMoveId = insertPendingMove(db, messageId, msg.uid, "INBOX", STAGING_FOLDER, pedidoPath);
+            pendingMoveId = insertPendingMove(db, messageId, msg.uid, "INBOX", imapStagingFolder, pedidoPath);
           } catch { /* DB podría no estar disponible aún */ }
 
           // Mover a staging — capturar nuevo UID para que step7 lo mueva al final
           let storedUid = msg.uid;
           let imapMoveOk = false;
           try {
-            const moveResult = await imapClient.messageMove(String(msg.uid), STAGING_FOLDER, { uid: true });
+            const moveResult = await imapClient.messageMove(String(msg.uid), imapStagingFolder, { uid: true });
             const newUid = (moveResult as { uidMap?: Map<number, number> })?.uidMap?.get(msg.uid);
             if (newUid) storedUid = newUid;
             imapMoveOk = true;

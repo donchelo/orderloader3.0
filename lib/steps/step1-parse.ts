@@ -113,7 +113,8 @@ function insertSapOrder(
   clienteNombre: string
 ): void {
   const now = new Date().toISOString();
-  const nit = order.CardCode.replace(/^CN/, "");
+  const prefix = getConfig().cardCodePrefix;
+  const nit = order.CardCode.startsWith(prefix) ? order.CardCode.slice(prefix.length) : order.CardCode;
   const fechaP = yyyymmddToIso(order.DocDate);
   const fechaG = yyyymmddToIso(order.DocDueDate);
 
@@ -155,17 +156,18 @@ function insertSapOrder(
 
 // esDirigidoAEmpresa y detectClientFromPdf importados desde lib/pdf-classify.ts
 
-async function notificarPDFNoTamaprint(
+async function notificarPDFNoEmpresa(
   cliente: string,
   carpeta: string,
   pdfNombre: string,
 ): Promise<void> {
+  const empresa = getConfig().tenantDisplayName;
   const fecha = new Date().toLocaleString("es-CO", { timeZone: "America/Bogota" });
   await sendAlertEmail(
-    `[OrderLoader] ⚠ PDF no dirigido a Tamaprint — ${cliente}/${carpeta}`,
+    `[OrderLoader] ⚠ PDF no dirigido a ${empresa} — ${cliente}/${carpeta}`,
     `<html><body style="font-family:Arial,sans-serif;font-size:13px">
       <h3 style="color:#856404;background:#fff3cd;padding:10px;border-radius:4px">
-        ⚠ PDF recibido no está dirigido a Tamaprint
+        ⚠ PDF recibido no está dirigido a ${empresa}
       </h3>
       <table style="border-collapse:collapse">
         <tr><td style="padding:4px 12px 4px 0"><b>Cliente:</b></td><td>${cliente}</td></tr>
@@ -174,7 +176,7 @@ async function notificarPDFNoTamaprint(
         <tr><td style="padding:4px 12px 4px 0"><b>Fecha:</b></td><td>${fecha}</td></tr>
       </table>
       <p style="margin-top:16px">
-        El PDF fue recibido pero <b>no contiene el NIT ni el nombre de Tamaprint</b> como proveedor.<br>
+        El PDF fue recibido pero <b>no contiene el NIT ni el nombre de ${empresa}</b> como proveedor.<br>
         Verificar manualmente si corresponde a otro proveedor.
       </p>
       <p style="color:#888;font-size:11px;margin-top:16px">Generado automáticamente por OrderLoader Pipeline</p>
@@ -273,7 +275,7 @@ export async function run(): Promise<StepResult> {
             result.detalles.push(`  → No dirigido a ${config.tenant} — omitido`);
             logPipeline(db, carpetaNombre, 1, "parse", "OK", `${pdfFile}: no dirigido a ${config.tenant}`);
             fs.writeFileSync(skipMarker, "");
-            await notificarPDFNoTamaprint(carpeta, carpetaNombre, pdfFile).catch(() => {});
+            await notificarPDFNoEmpresa(carpeta, carpetaNombre, pdfFile).catch(() => {});
             continue;
           }
 
@@ -294,7 +296,7 @@ export async function run(): Promise<StepResult> {
                 <h3 style="color:#856404;background:#fff3cd;padding:10px;border-radius:4px">
                   ⚠ No se pudo identificar el cliente desde el PDF
                 </h3>
-                <p>El PDF <b>${pdfFile}</b> está dirigido a Tamaprint pero no contiene
+                <p>El PDF <b>${pdfFile}</b> está dirigido a ${config.tenantDisplayName} pero no contiene
                 el NIT ni keywords de ningún cliente registrado.</p>
                 <p><b>Carpeta:</b> ${carpeta}/${carpetaNombre}</p>
                 <p>Verificar manualmente si corresponde a un cliente nuevo.</p>
