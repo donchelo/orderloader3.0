@@ -10,6 +10,7 @@ import path from "path";
 import Anthropic from "@anthropic-ai/sdk";
 import { getConfig } from "../config";
 import { getDb, logPipeline } from "../db";
+import { OrderStatus } from "../constants";
 import { sendAlertEmail } from "../mailer";
 import { SapB1OrderSchema, type SapB1Order } from "../schemas";
 export type { SapB1Order };
@@ -139,8 +140,8 @@ function insertSapOrder(
     INSERT OR REPLACE INTO pedidos_maestro
       (nit_cliente, orden_compra, fecha_solicitado, fecha_entrega_general,
        cliente_nombre, subtotal, notas, estado, ts_parsed, fase_actual, carpeta_origen)
-    VALUES (?, ?, ?, ?, ?, ?, ?, 'PARSED', ?, 1, ?)
-  `).run(nit, order.NumAtCard, fechaP, fechaG, clienteNombre, subtotalTotal, `TaxDate:${order.TaxDate}`, now, carpeta);
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?)
+  `).run(nit, order.NumAtCard, fechaP, fechaG, clienteNombre, subtotalTotal, `TaxDate:${order.TaxDate}`, OrderStatus.PARSED, now, carpeta);
 
   db.prepare("DELETE FROM pedidos_detalle WHERE orden_compra = ?").run(order.NumAtCard);
 

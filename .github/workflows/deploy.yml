@@ -6,22 +6,66 @@ on:
       - main
 
 jobs:
-  deploy:
+  test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm test
 
-      - name: Executing remote ssh commands
+  deploy:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy con rollback automático
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.REMOTE_HOST }}
           username: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            set -e
             cd ~/orderLoader
+
+            # Guardar commit anterior para rollback
+            PREV_COMMIT=$(git rev-parse HEAD)
+            echo "Commit anterior: $PREV_COMMIT"
+
             git pull origin main
+            NEW_COMMIT=$(git rev-parse HEAD)
+            echo "Commit nuevo: $NEW_COMMIT"
+
             docker compose up -d --build
-            # Asegurar permisos de la base de datos después de actualizar
+
+            # Asegurar permisos de la base de datos
             docker exec -u root orderloader chown -R node:node /app/.data
             docker exec -u root orderloader chmod -R 777 /app/.data
+
+            # Health check post-deploy (esperar hasta 60s)
+            echo "Verificando salud del servicio..."
+            for i in $(seq 1 12); do
+              sleep 5
+              STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/health || echo "000")
+              if [ "$STATUS" = "200" ]; then
+                echo "✓ Servicio saludable (intento $i)"
+                exit 0
+              fi
+              echo "  intento $i: status=$STATUS"
+            done
+
+            # Health check falló → rollback
+            echo "✗ Health check falló. Haciendo rollback a $PREV_COMMIT..."
+            git checkout "$PREV_COMMIT"
+            docker compose up -d --build
+            docker exec -u root orderloader chown -R node:node /app/.data || true
+            docker exec -u root orderloader chmod -R 777 /app/.data || true
+            echo "Rollback completado. Verificando..."
+            sleep 10
+            curl -sf http://localhost:3000/api/health && echo "✓ Rollback exitoso" || echo "⚠ Servicio degradado post-rollback"
+            exit 1

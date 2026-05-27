@@ -1,5 +1,6 @@
-import { backupDb, migrate } from "./db";
-import { getLogger } from "./logger";
+import { backupDb, migrate, getDb } from "./db";
+import { getLogger, setRunContext, clearRunContext } from "./logger";
+import { sendAlertEmail } from "./mailer";
 
 const log = getLogger("pipeline");
 import { run as step0, recoverPendingMoves } from "./steps/step0-download";
@@ -104,6 +105,50 @@ async function runSteps(stepsToRun: typeof STEPS, onStep?: PipelineOptions["onSt
   return results;
 }
 
+// ── Alerta: cron perdido ──────────────────────────────────────────────────────
+async function checkMissedCron(): Promise<void> {
+  try {
+    const db = getDb();
+    const row = db
+      .prepare(`SELECT MAX(ts) as last FROM pipeline_log WHERE fase_nombre = 'pipeline'`)
+      .get() as { last: string | null };
+    if (!row?.last) return;
+    const lastMs = new Date(row.last).getTime();
+    const hoursAgo = (Date.now() - lastMs) / 3_600_000;
+    if (hoursAgo > 25) {
+      const h = hoursAgo.toFixed(1);
+      await sendAlertEmail(
+        `[OrderLoader] ⚠ Cron perdido — sin actividad hace ${h}h`,
+        `<p>El pipeline no registra actividad desde hace <strong>${h} horas</strong>.</p>
+         <p>Última ejecución: <code>${row.last}</code></p>
+         <p>Verificar que el cron de GitHub Actions está corriendo.</p>`,
+      ).catch(() => {});
+    }
+  } catch { /* no bloquear el pipeline por esto */ }
+}
+
+// ── Alerta: tasa de errores alta ─────────────────────────────────────────────
+async function alertIfHighErrorRate(results: StepResult[]): Promise<void> {
+  const totals = results.reduce(
+    (acc, r) => ({ ok: acc.ok + r.procesados, err: acc.err + r.errores }),
+    { ok: 0, err: 0 },
+  );
+  const total = totals.ok + totals.err;
+  if (total === 0 || totals.err / total < 0.5) return;
+
+  const lines = results
+    .filter(r => r.errores > 0)
+    .map(r => `<li>step:${r.step} ${r.name} — ${r.errores} error(s): ${r.detalles.filter(d => d.includes("✗") || /error/i.test(d)).slice(0, 3).join("; ")}</li>`)
+    .join("");
+
+  await sendAlertEmail(
+    `[OrderLoader] ✗ Alta tasa de errores — ${totals.err}/${total} órdenes fallaron`,
+    `<p>El pipeline terminó con <strong>${totals.err} de ${total}</strong> órdenes en error (>${Math.round(totals.err / total * 100)}%).</p>
+     <ul>${lines}</ul>
+     <p>Revisar logs para más detalle.</p>`,
+  ).catch(() => {});
+}
+
 export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResult[]> {
   const { fromStep = 0, toStep = 7, onlyStep, maxIterations = 50, onStep } = opts;
 
@@ -122,7 +167,13 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
   _running = true;
   _stopRequested = false;
   const runStart = Date.now();
+  const runId = `run_${runStart}`;
+  let _finalResults: StepResult[] = [];
+  setRunContext({ pipeline_run_id: runId });
   log.info("─────────────────────────────────── pipeline start ───────────────────────────────────");
+
+  // Alertar si el cron no corrió en las últimas 25h
+  await checkMissedCron();
 
   // Ensure DB schema exists (handles empty/new DB)
   try { migrate(); } catch (e) { log.error({ err: e }, "migrate falló"); }
@@ -147,7 +198,8 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
       const stepsToRun = onlyStep != null
         ? STEPS.filter(s => s.n === onlyStep)
         : STEPS.filter(s => s.n >= fromStep && s.n <= toStep);
-      return await runSteps(stepsToRun, onStep);
+      _finalResults = await runSteps(stepsToRun, onStep);
+      return _finalResults;
     }
 
   // Flujo completo (fromStep=0): loop unitario — 1 correo a la vez, ciclo completo 0→7
@@ -223,6 +275,7 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
       }
     }
 
+    _finalResults = allResults;
     return allResults;
 
   } finally {
@@ -230,5 +283,7 @@ export async function runPipeline(opts: PipelineOptions = {}): Promise<StepResul
     _stopRequested = false;
     await logoutSapClient();
     log.info(`──────────────────────────── pipeline done (${fmtMs(Date.now() - runStart)}) ────────────────────────────`);
+    await alertIfHighErrorRate(_finalResults);
+    clearRunContext();
   }
 }

@@ -46,5 +46,6 @@ next-env.d.ts
 # archivos generados en runtime
 server.log
 project.tar.gz
-scratch/flexoimpresos-oc/
+# Directorio de experimentación local — no debe commitearse
+/scratch/
 .claude/

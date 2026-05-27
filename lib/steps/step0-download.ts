@@ -36,7 +36,9 @@ export interface StepResult {
 }
 
 function clean(text: string): string {
-  return text.replace(/[^a-zA-Z0-9\-_.]/g, "_");
+  // path.basename strips any directory traversal before sanitizing characters
+  const base = path.basename(text);
+  return base.replace(/[^a-zA-Z0-9\-_.]/g, "_");
 }
 
 interface AttachmentInfo {

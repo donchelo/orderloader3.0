@@ -1,44 +1,66 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
 
+// ── Rate limiting (in-process Map, válido para despliegue Docker persistente) ─
+const RATE_LIMIT_MS = 5 * 60 * 1000; // 1 trigger de pipeline cada 5 minutos por IP
+const _lastTrigger = new Map<string, number>();
+
+function isPipelineTrigger(pathname: string): boolean {
+  return pathname === "/api/pipeline/run";
+}
+
+function getClientIp(req: NextRequest): string {
+  return (
+    req.headers.get("x-forwarded-for")?.split(",")[0].trim() ??
+    req.headers.get("x-real-ip") ??
+    "unknown"
+  );
+}
+
 export function middleware(req: NextRequest) {
-  const basicAuth = req.headers.get("authorization");
+  // Health check: siempre permitido sin auth
+  if (req.nextUrl.pathname === "/api/health") {
+    return NextResponse.next();
+  }
 
   if (process.env.NODE_ENV === "production") {
-    // Saltamos la protección para el health check si existe
-    if (req.nextUrl.pathname === "/api/health") {
-      return NextResponse.next();
+    // ── Autenticación Basic Auth ─────────────────────────────────────────────
+    const basicAuth = req.headers.get("authorization");
+    if (!basicAuth) {
+      return new NextResponse("Autenticación requerida", {
+        status: 401,
+        headers: { "WWW-Authenticate": 'Basic realm="OrderLoader Secure Area"' },
+      });
     }
 
-    if (basicAuth) {
-      const authValue = basicAuth.split(" ")[1];
-      const [user, pwd] = atob(authValue).split(":");
+    const authValue = basicAuth.split(" ")[1];
+    const [, pwd] = atob(authValue).split(":");
+    if (pwd !== process.env.CRON_SECRET) {
+      return new NextResponse("Credenciales inválidas", {
+        status: 401,
+        headers: { "WWW-Authenticate": 'Basic realm="OrderLoader Secure Area"' },
+      });
+    }
 
-      // Según el README, usamos CRON_SECRET como contraseña (usuario cualquiera)
-      if (pwd === process.env.CRON_SECRET) {
-        return NextResponse.next();
+    // ── Rate limiting para trigger de pipeline ───────────────────────────────
+    if (isPipelineTrigger(req.nextUrl.pathname)) {
+      const ip = getClientIp(req);
+      const last = _lastTrigger.get(ip) ?? 0;
+      const elapsed = Date.now() - last;
+      if (elapsed < RATE_LIMIT_MS) {
+        const retryAfter = Math.ceil((RATE_LIMIT_MS - elapsed) / 1000);
+        return new NextResponse(
+          `Rate limit: espera ${retryAfter}s antes de volver a disparar el pipeline`,
+          { status: 429, headers: { "Retry-After": String(retryAfter) } },
+        );
       }
+      _lastTrigger.set(ip, Date.now());
     }
-
-    return new NextResponse("Autenticación requerida", {
-      status: 401,
-      headers: {
-        "WWW-Authenticate": 'Basic realm="OrderLoader Secure Area"',
-      },
-    });
   }
 
   return NextResponse.next();
 }
 
 export const config = {
-  matcher: [
-    /*
-     * Match all request paths except for the ones starting with:
-     * - _next/static (static files)
-     * - _next/image (image optimization files)
-     * - favicon.ico (favicon file)
-     */
-    "/((?!_next/static|_next/image|favicon.ico).*)",
-  ],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico).*)"],
 };

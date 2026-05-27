@@ -40,6 +40,35 @@ Configura `VM_HOST=user@ip` y opcionalmente `VM_PATH=~/ruta/.data` en `.env.loca
 
 **IMPORTANTE:** Nunca correr step 0 localmente — en cualquier tenant conecta al inbox real de producción (IMAP o Microsoft Graph) y puede descargar correos activos.
 
+## Rotación de Secrets
+
+### CRON_SECRET (HTTP Basic Auth)
+Protege todos los endpoints excepto `/api/health`. Si se compromete, rotar así:
+
+```bash
+# 1. Generar nuevo secret
+openssl rand -base64 32
+
+# 2. Actualizar en la VM
+#    Editar .env en ~/orderLoader/ con el nuevo valor
+
+# 3. Actualizar en GitHub Secrets (Settings → Secrets → CRON_SECRET)
+#    Si el cron de GitHub Actions usa este secret en el script de deploy
+
+# 4. Redeploy
+docker compose up -d --build
+
+# 5. Verificar que el health check siga respondiendo
+curl http://localhost:3000/api/health
+```
+
+### ANTHROPIC_API_KEY
+Rotar en https://console.anthropic.com/ → API Keys. Actualizar `.env` y redeploy.
+
+### SAP B1 Credentials
+Coordinar con el administrador SAP. Actualizar `SAP_B1_USER`, `SAP_B1_PASS` en `.env` y redeploy.
+
 ## Troubleshooting
 - **Pipeline Logs**: `docker logs orderloader -f`
 - **DB Backups**: Found in `.data/pedidos/backups/`.
+- **Runbook completo**: Ver `docs/runbook.md`

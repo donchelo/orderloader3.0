@@ -13,6 +13,7 @@ import path from "path";
 import { getDb, logPipeline } from "../db";
 import { getSapClient, clearSapClient } from "../sap-client";
 import type { SapB1Order } from "./step1-parse";
+import { OrderStatus } from "../constants";
 
 export interface StepResult {
   procesados: number;
@@ -42,8 +43,8 @@ export async function run(): Promise<StepResult> {
   const db = getDb();
 
   const pendientes = db.prepare(
-    "SELECT * FROM pedidos_maestro WHERE estado = 'SAP_MONTADO'"
-  ).all() as Array<Record<string, unknown>>;
+    "SELECT * FROM pedidos_maestro WHERE estado = ?"
+  ).all(OrderStatus.SAP_MONTADO) as Array<Record<string, unknown>>;
 
   if (!pendientes.length) {
     result.detalles.push("No hay pedidos en estado SAP_MONTADO");

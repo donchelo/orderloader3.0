@@ -173,6 +173,14 @@ export function migrate(): void {
       ts_modificado    TEXT DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS pipeline_triggers (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      ts        TEXT DEFAULT (datetime('now')),
+      source    TEXT,
+      ip        TEXT,
+      resultado TEXT
+    );
+
     CREATE INDEX IF NOT EXISTS idx_maestro_estado ON pedidos_maestro(estado);
     CREATE INDEX IF NOT EXISTS idx_maestro_fecha  ON pedidos_maestro(fecha_recepcion);
     CREATE INDEX IF NOT EXISTS idx_detalle_oc     ON pedidos_detalle(orden_compra);
@@ -181,16 +189,60 @@ export function migrate(): void {
     CREATE INDEX IF NOT EXISTS idx_clientes_nit   ON clientes_aprobados(nit_principal);
   `);
 
-  // Migraciones para columnas agregadas después de la creación inicial
-  try { db.exec(`ALTER TABLE pedidos_maestro ADD COLUMN items_excluidos TEXT`); } catch { /* ya existe */ }
-  try { db.exec(`ALTER TABLE pipeline_log ADD COLUMN input_tokens INTEGER`); } catch { /* ya existe */ }
-  try { db.exec(`ALTER TABLE pipeline_log ADD COLUMN output_tokens INTEGER`); } catch { /* ya existe */ }
-  try { db.exec(`ALTER TABLE pipeline_log ADD COLUMN model TEXT`); } catch { /* ya existe */ }
-  try { db.exec(`ALTER TABLE pedidos_maestro ADD COLUMN notificacion_enviada INTEGER DEFAULT 0`); } catch { /* ya existe */ }
-  try { db.exec(`ALTER TABLE pedidos_maestro ADD COLUMN costo_ia_usd REAL`); } catch { /* ya existe */ }
+  // ── Migraciones versionadas ───────────────────────────────────────────────
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS _migrations (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      name       TEXT NOT NULL UNIQUE,
+      applied_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
+
+  const applied = new Set(
+    (db.prepare("SELECT name FROM _migrations").all() as { name: string }[]).map(r => r.name)
+  );
+
+  const migrations: Array<{ name: string; sql: string }> = [
+    { name: "001_add_items_excluidos",      sql: `ALTER TABLE pedidos_maestro ADD COLUMN items_excluidos TEXT` },
+    { name: "002_add_log_input_tokens",     sql: `ALTER TABLE pipeline_log ADD COLUMN input_tokens INTEGER` },
+    { name: "003_add_log_output_tokens",    sql: `ALTER TABLE pipeline_log ADD COLUMN output_tokens INTEGER` },
+    { name: "004_add_log_model",            sql: `ALTER TABLE pipeline_log ADD COLUMN model TEXT` },
+    { name: "005_add_notificacion_enviada", sql: `ALTER TABLE pedidos_maestro ADD COLUMN notificacion_enviada INTEGER DEFAULT 0` },
+    { name: "006_add_costo_ia_usd",         sql: `ALTER TABLE pedidos_maestro ADD COLUMN costo_ia_usd REAL` },
+  ];
+
+  for (const m of migrations) {
+    if (applied.has(m.name)) continue;
+    try {
+      db.exec(m.sql);
+      db.prepare("INSERT INTO _migrations (name) VALUES (?)").run(m.name);
+      log.info(`migration applied: ${m.name}`);
+    } catch (e) {
+      // Column already exists from before migration tracking — record and continue
+      const msg = String(e);
+      if (msg.includes("duplicate column name") || msg.includes("already exists")) {
+        db.prepare("INSERT OR IGNORE INTO _migrations (name) VALUES (?)").run(m.name);
+      } else {
+        throw new Error(`Migration "${m.name}" failed: ${msg}`);
+      }
+    }
+  }
 
   db.close();
   log.info({ path: config.dbPath }, "DB migrada correctamente");
+}
+
+export function logTrigger(
+  db: Database.Database,
+  source: string,
+  ip: string,
+  resultado: "iniciado" | "ya_corriendo" | "rate_limited" | "error",
+): void {
+  try {
+    db.prepare(
+      `INSERT INTO pipeline_triggers (source, ip, resultado) VALUES (?, ?, ?)`
+    ).run(source, ip, resultado);
+  } catch { /* no bloquear por fallo de audit log */ }
 }
 
 export function logPipeline(
