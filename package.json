@@ -1,6 +1,6 @@
 {
   "name": "orderloader",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -9,7 +9,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "pull-db": "bash scripts/pull-db.sh"
+    "pull-db": "bash scripts/pull-db.sh",
+    "publish:changelog": "tsx scripts/publish-changelog.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.80.0",

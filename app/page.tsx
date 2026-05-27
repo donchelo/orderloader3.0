@@ -91,6 +91,9 @@ export default function Home() {
             <Link href="/clientes" className="text-xs text-cadet-gray hover:text-erie-black transition-colors font-mono">
               Clientes →
             </Link>
+            <Link href="/changelog" className="text-xs text-cadet-gray hover:text-erie-black transition-colors font-mono">
+              Changelog →
+            </Link>
             {lastRefresh && (
               <time className="text-xs text-cadet-gray font-mono" dateTime={lastRefresh.toISOString()}>
                 {lastRefresh.toLocaleTimeString("es-CO")}

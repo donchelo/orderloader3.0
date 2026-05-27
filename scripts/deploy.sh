@@ -21,3 +21,14 @@ echo "Contenedores corriendo:"
 docker ps --filter name=orderloader --format 'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
 echo ""
 echo "Dashboard: http://localhost:$PORT"
+
+# Publica el changelog post-deploy (no bloquea si falla o no está configurado)
+if [ -f .env ] && grep -q '^CHANGELOG_API_KEY=' .env; then
+  echo ""
+  echo "Publicando changelog..."
+  set -a
+  # shellcheck disable=SC1091
+  . ./.env
+  set +a
+  npm run publish:changelog || echo "publish:changelog falló — continuando."
+fi
