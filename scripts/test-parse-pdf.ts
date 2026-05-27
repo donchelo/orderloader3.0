@@ -7,7 +7,8 @@
 import fs from "fs";
 import path from "path";
 import Anthropic from "@anthropic-ai/sdk";
-import { PROMPT_COMODIN, PROMPT_EXITO, PROMPT_HERMECO, PROMPT_EUROCORSETT, PROMPT_INDUSTRIASCORY, PROMPT_ESTUDIOMODA, PROMPT_PINTURAS_PRIME, PROMPT_MANUTEX, PROMPT_ELGLOBO, PROMPT_SERVICIO_COMPLETO, PROMPT_ICVO, PROMPT_PRODUEMPAK, PROMPT_PROINTIMO, PROMPT_TERMIMODA } from "../lib/prompts";
+import { PROMPT_COMODIN, PROMPT_EXITO, PROMPT_HERMECO, PROMPT_EUROCORSETT, PROMPT_INDUSTRIASCORY, PROMPT_ESTUDIOMODA, PROMPT_PINTURAS_PRIME, PROMPT_MANUTEX, PROMPT_ELGLOBO, PROMPT_SERVICIO_COMPLETO, PROMPT_ICVO, PROMPT_PRODUEMPAK, PROMPT_PROINTIMO, PROMPT_TERMIMODA, PROMPT_BYSPRO, PROMPT_LAIMA } from "../lib/prompts";
+import { pdfToImages, buildVisionContent } from "../lib/pdf-vision";
 
 const PROMPTS: Record<string, string> = {
   Comodin:          PROMPT_COMODIN,
@@ -24,6 +25,8 @@ const PROMPTS: Record<string, string> = {
   Produempak:       PROMPT_PRODUEMPAK,
   Prointimo:        PROMPT_PROINTIMO,
   Termimoda:        PROMPT_TERMIMODA,
+  Byspro:           PROMPT_BYSPRO,
+  Laima:            PROMPT_LAIMA,
 };
 
 async function main() {
@@ -51,19 +54,17 @@ async function main() {
   console.log(`\nParsando: ${path.basename(pdfPath)}`);
   console.log(`Cliente:  ${clienteArg}\n`);
 
-  const pdfParseFn = require("pdf-parse") as (buf: Buffer) => Promise<{ text: string }>;
-  const buffer = fs.readFileSync(pdfPath);
-  const { text } = await pdfParseFn(buffer);
-
-  console.log("--- TEXTO EXTRAÍDO DEL PDF ---");
-  console.log(text.slice(0, 800));
-  console.log("...\n");
-
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {
     console.error("Falta ANTHROPIC_API_KEY en el entorno");
     process.exit(1);
   }
+
+  const buffer = fs.readFileSync(pdfPath);
+  console.log("Convirtiendo PDF a imágenes (modo visión)...");
+  const { pages } = await pdfToImages(buffer);
+  const visionContent = buildVisionContent(pages);
+  console.log(`  ${pages.length} página(s) → ${visionContent.length} bloques de contenido\n`);
 
   const client = new Anthropic({ apiKey });
   const msg = await client.messages.create({
@@ -71,7 +72,7 @@ async function main() {
     max_tokens: 8192,
     temperature: 0,
     system: prompt,
-    messages: [{ role: "user", content: text }],
+    messages: [{ role: "user", content: visionContent }],
   });
 
   const raw = msg.content[0].type === "text" ? msg.content[0].text.trim() : "";

@@ -481,7 +481,7 @@ Analyze the provided Pinturas Prime S.A. purchase order and generate a JSON obje
 - **Document date** (TaxDate): The "Fecha de Pedido" field
 - **Delivery date** (DocDueDate): The "Fecha de Entrega" column value from the line item
 - **Today's date** (DocDate): The current date at time of processing — NOT from the document
-- **Observations** (Comments): Verbatim text from "OBSERVACIONES ESPECIFICAS DE LA COMPRA" section. Use "" if absent.
+- **Observations** (Comments): Verbatim text from "OBSERVACIONES ESPECIFICAS DE LA COMPRA" section. Use "" if absent or if only an address appears there (e.g., "CARRERA 45 N° 14-01 MEDELLIN" is the buyer's address, NOT an observation — ignore it).
 - **Line items**: For each product row extract:
   - Product description (SupplierCatNum) — this document has NO product code column; use the full text from the "Descripción" column (e.g., "ETIQUETA SOLARTHANE GALON")
   - Ordered quantity (Quantity) — from "Cantidad" column
@@ -527,7 +527,7 @@ Analyze the provided Pinturas Prime S.A. purchase order and generate a JSON obje
 | Today's date (processing date)      | DocDate           | YYYYMMDD — NOT from document              |
 | "Fecha de Entrega" column           | DocDueDate        | YYYYMMDD                                  |
 | "Fecha de Pedido" field             | TaxDate           | YYYYMMDD                                  |
-| OBSERVACIONES ESPECIFICAS section   | Comments          | Verbatim text, "" if absent               |
+| OBSERVACIONES ESPECIFICAS section   | Comments          | Verbatim text, "" if absent or only address |
 | "Descripción" column (full text)    | DocumentLines[].SupplierCatNum | String — no code column exists |
 | "Cantidad" column                   | DocumentLines[].Quantity       | Integer                        |
 | "Precio Unitario" column            | DocumentLines[].UnitPrice      | Decimal, 0 if absent           |
@@ -708,7 +708,7 @@ Analyze the provided C.I. El Globo S.A.S. purchase order and generate a JSON obj
 | FECHA ENTREGA column            | DocDueDate        | YYYYMMDD                                     |
 | "Fecha Orden:" field            | TaxDate           | YYYYMMDD — parse English month               |
 | "Notas:" field                  | Comments          | Verbatim, "" if absent                       |
-| ITEM column (no leading zeros)  | DocumentLines[].SupplierCatNum | String                        |
+| ITEM column (preserve leading zeros) | DocumentLines[].SupplierCatNum | String                   |
 | CANTIDAD column                 | DocumentLines[].Quantity       | Integer                       |
 | COSTO column                    | DocumentLines[].UnitPrice      | Decimal, 0 if absent          |
 | FECHA ENTREGA column            | DocumentLines[].DeliveryDate   | YYYYMMDD                      |
@@ -720,7 +720,7 @@ Before generating the response, verify:
 - ✅ DocDate is today's processing date in YYYYMMDD (NOT from the document)
 - ✅ TaxDate parsed from English-format Fecha Orden in YYYYMMDD
 - ✅ DocDueDate matches FECHA ENTREGA column in YYYYMMDD
-- ✅ SupplierCatNum has NO leading zeros
+- ✅ SupplierCatNum preserves leading zeros exactly as printed (e.g., "0187491" → "0187491")
 - ✅ Quantities are whole integers (dot decimals stripped)
 - ✅ UnitPrice × Quantity ≈ Total Bruto for every row
 - ✅ Comments contains verbatim Notas value (or "" if absent)
@@ -1010,9 +1010,9 @@ Analyze the provided purchase order document and generate a JSON object followin
 ### 2. DATA EXTRACTION
 - **Order number** (NumAtCard): The purchase order number issued by the buyer
 - **Buyer code** (CardCode): The buyer's NIT/code as it appears in the document — **MUST always be formatted as "CN" followed by the numeric NIT without hyphens or spaces**
-- **Document date** (DocDate): The date the order was issued
+- **Today's date** (DocDate): The current date at time of processing — NOT from the document
 - **Delivery date** (DocDueDate): The requested delivery date
-- **Tax date** (TaxDate): The invoice/tax reference date (use document date if not explicitly stated)
+- **Tax date** (TaxDate): The date the order was issued (use document date)
 - **Observations / remarks** (Comments): Verbatim text from any "Observaciones", "Remarks", "Notas", or similar section. Use "" if none found.
 - **Line items**: For each product extract:
   - Supplier catalog number / product code (SupplierCatNum) — **remove any leading zeros** (e.g., "0201931" → "201931")

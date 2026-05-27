@@ -40,8 +40,9 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local data folder
+# local data folders
 /.data
+/.data.flexoimpresos
 
 # archivos generados en runtime
 server.log
