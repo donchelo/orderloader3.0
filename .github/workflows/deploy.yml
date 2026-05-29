@@ -41,6 +41,14 @@ jobs:
             NEW_COMMIT=$(git rev-parse HEAD)
             echo "Commit nuevo: $NEW_COMMIT"
 
+            # Liberar espacio antes de construir (evita ENOSPC por imágenes/cache acumulados).
+            # Sin --volumes: la BD vive en un bind mount (.data) y NO se toca.
+            echo "Disco antes de limpiar:"; df -h / | tail -1
+            docker container prune -f
+            docker image prune -af
+            docker builder prune -af
+            echo "Disco después de limpiar:"; df -h / | tail -1
+
             docker compose up -d --build
 
             # Asegurar permisos de la base de datos
