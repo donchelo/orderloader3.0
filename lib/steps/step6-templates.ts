@@ -1,19 +1,21 @@
 import type Database from "better-sqlite3";
+import { AI4U_PALETTE } from "@ai4u/design-system/tokens";
 
-// ─── Brand Tokens (Ai4U Design System) ───────────────────────────────────────
+// ─── Brand Tokens ─────────────────────────────────────────────────────────────
 const B = {
-  mintCream:     "#eaf4eb",
-  erieBlack:     "#171717",
-  hotOrange:     "#ff6e00",
-  moderateBlue:  "#3daed1",
-  cadetGray:     "#94989b",
-  white:         "#ffffff",
+  mintCream:     AI4U_PALETTE.mintCream,
+  erieBlack:     AI4U_PALETTE.erieBlack,
+  hotOrange:     AI4U_PALETTE.hotOrange,
+  moderateBlue:  AI4U_PALETTE.moderateBlue,
+  cadetGray:     AI4U_PALETTE.cadetGray,
+  white:         AI4U_PALETTE.white,
+  // Email status colors (semantic, not brand palette)
   successBg:     "#dff4fb",
   successText:   "#0369a1",
-  successBorder: "#3daed1",
+  successBorder: AI4U_PALETTE.moderateBlue,
   warnBg:        "#fff7ed",
   warnText:      "#c2410c",
-  warnBorder:    "#ff6e00",
+  warnBorder:    AI4U_PALETTE.hotOrange,
   errorBg:       "#fde8e8",
   errorText:     "#b91c1c",
   errorBorder:   "#fca5a5",
