@@ -4,6 +4,12 @@ import { TAMAPRINT_RECEPTOR_KEYWORDS, FLEXO_RECEPTOR_KEYWORDS } from "./pdf-clas
 export type EmailProvider = "imap" | "microsoft";
 export type Tenant = "tamaprint" | "flexoimpresos";
 
+// Per-tenant static config — add new tenants here only
+const TENANT_META: Record<Tenant, { displayName: string; receptorKeywords: string[]; cardCodePrefix: string }> = {
+  tamaprint:     { displayName: "Tamaprint",     receptorKeywords: TAMAPRINT_RECEPTOR_KEYWORDS, cardCodePrefix: "CN" },
+  flexoimpresos: { displayName: "Flexo Impresos", receptorKeywords: FLEXO_RECEPTOR_KEYWORDS,    cardCodePrefix: "C"  },
+};
+
 export interface Config {
   // Paths
   workspaceRoot: string;
@@ -137,14 +143,17 @@ export function getConfig(): Config {
     sapCompany: process.env.SAP_B1_COMPANY ?? "",
 
     tenant: (process.env.TENANT ?? "tamaprint") as Tenant,
-    tenantDisplayName: process.env.TENANT === "flexoimpresos" ? "Flexo Impresos" : "Tamaprint",
+    ...((): Pick<Config, "tenantDisplayName" | "receptorKeywords" | "cardCodePrefix"> => {
+      const t = (process.env.TENANT ?? "tamaprint") as Tenant;
+      const meta = TENANT_META[t] ?? TENANT_META["tamaprint"];
+      return {
+        tenantDisplayName: process.env.TENANT_DISPLAY_NAME ?? meta.displayName,
+        receptorKeywords:  meta.receptorKeywords,
+        cardCodePrefix:    process.env.CARD_CODE_PREFIX ?? meta.cardCodePrefix,
+      };
+    })(),
     stagingFolderName:      process.env.STAGING_FOLDER_NAME       ?? "A A REVISAR IA",
     manualReviewFolderName: process.env.MANUAL_REVIEW_FOLDER_NAME ?? "A A SANDRA",
-    receptorKeywords: process.env.TENANT === "flexoimpresos"
-      ? FLEXO_RECEPTOR_KEYWORDS
-      : TAMAPRINT_RECEPTOR_KEYWORDS,
-    cardCodePrefix: process.env.CARD_CODE_PREFIX
-      ?? (process.env.TENANT === "flexoimpresos" ? "C" : "CN"),
   };
 
   return _config;
