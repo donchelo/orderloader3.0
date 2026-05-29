@@ -72,3 +72,19 @@ Coordinar con el administrador SAP. Actualizar `SAP_B1_USER`, `SAP_B1_PASS` en `
 - **Pipeline Logs**: `docker logs orderloader -f`
 - **DB Backups**: Found in `.data/pedidos/backups/`.
 - **Runbook completo**: Ver `docs/runbook.md`
+
+## Versionado — obligatorio antes de cada commit
+
+OrderLoader usa su **propio cliente** en el changelog-service (no el de tamaprint),
+porque tiene API key y script de publicación dedicados.
+
+```bash
+# Publica desde la VM / local con el script ya configurado:
+npm run publish:changelog
+```
+
+Variables (en `.env`): `CHANGELOG_URL`, `CHANGELOG_CLIENT_ID=orderloader`,
+`CHANGELOG_APP_ID=web`, `CHANGELOG_API_KEY=clk_...`.
+
+La UI lee el changelog vía `/api/changelog` (proxy server-side) y lo muestra en `/changelog`.
+Bump la versión en `package.json` y registra los cambios con `publish:changelog` antes de cada deploy.
