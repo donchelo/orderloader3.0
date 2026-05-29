@@ -82,7 +82,7 @@ function buildDetalle(row: Record<string, unknown>): string {
 
 // ─── Section builders ─────────────────────────────────────────────────────────
 
-function sectionTitle(text: string, color = B.erieBlack): string {
+function sectionTitle(text: string, color: string = B.erieBlack): string {
   return `<tr><td style="padding:24px 0 8px 0;font-family:${FONT};font-size:14px;font-weight:700;color:${color};letter-spacing:0.05em">${text}</td></tr>`;
 }
 
