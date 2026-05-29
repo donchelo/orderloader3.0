@@ -276,10 +276,24 @@ export async function run(): Promise<StepResult> {
     } catch { /* metadata no disponible */ }
   }
 
+  // Deduplicar por messageId: varios pedidos pueden venir del mismo correo.
+  // Si un correo tiene múltiples OCs, se mueve UNA sola vez al destino más restrictivo
+  // (REVISAR_IA > SANDRA > INGRESADO) para no intentar mover el mismo UID dos veces.
+  const DEST_PRIORITY: Record<string, number> = { [DEST_REVISAR]: 2, [DEST_SANDRA]: 1, [DEST_OK]: 0 };
+  const byMessageId = new Map<string, MoveJob>();
+  for (const job of moveJobs) {
+    const key = job.messageId ?? `uid:${job.uid}`;
+    const existing = byMessageId.get(key);
+    if (!existing || (DEST_PRIORITY[job.dest] ?? 0) > (DEST_PRIORITY[existing.dest] ?? 0)) {
+      byMessageId.set(key, job);
+    }
+  }
+  const dedupedMoveJobs = [...byMessageId.values()];
+
   if (config.emailProvider === "microsoft") {
-    await moveInGraph(config, moveJobs, result.detalles);
+    await moveInGraph(config, dedupedMoveJobs, result.detalles);
   } else {
-    await moveInImap(config, moveJobs, result.detalles);
+    await moveInImap(config, dedupedMoveJobs, result.detalles);
   }
 
   // Marcar CERRADO en DB
@@ -308,16 +322,27 @@ export async function run(): Promise<StepResult> {
 
       const cerradoMap = new Map(cerrados.map(r => [String(r.orden_compra), r]));
 
-      const orphanJobs: MoveJob[] = [];
+      const orphanJobsRaw: MoveJob[] = [];
       for (const [oc, entries] of stagingByOC.entries()) {
         const row = cerradoMap.get(oc);
         if (!row) continue;
         for (const { uid, messageId, hasExtraFiles, source, graphMessageId } of entries) {
           const dest     = isLimpio(row) ? (hasExtraFiles ? DEST_SANDRA : DEST_OK) : DEST_REVISAR;
           const destName = isLimpio(row) ? (hasExtraFiles ? "A A SANDRA" : "A B INGRESADO") : "A A REVISAR IA";
-          orphanJobs.push({ uid, messageId, source, dest, graphMessageId, graphDestFolderName: destName });
+          orphanJobsRaw.push({ uid, messageId, source, dest, graphMessageId, graphDestFolderName: destName });
         }
       }
+
+      // Deduplicar huérfanos por messageId: mismo correo puede aparecer en múltiples OCs
+      const orphanByMsgId = new Map<string, MoveJob>();
+      for (const job of orphanJobsRaw) {
+        const key = job.messageId ?? `uid:${job.uid}`;
+        const existing = orphanByMsgId.get(key);
+        if (!existing || (DEST_PRIORITY[job.dest] ?? 0) > (DEST_PRIORITY[existing.dest] ?? 0)) {
+          orphanByMsgId.set(key, job);
+        }
+      }
+      const orphanJobs = [...orphanByMsgId.values()];
 
       if (orphanJobs.length > 0) {
         if (config.emailProvider === "microsoft") {

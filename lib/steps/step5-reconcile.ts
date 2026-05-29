@@ -83,7 +83,7 @@ export async function run(): Promise<StepResult> {
       pdfData = JSON.parse(fs.readFileSync(markerPath, "utf8")) as SapB1Order;
     } catch (e) {
       db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_VALIDACION', error_msg=? WHERE orden_compra=?`)
-        .run(`data_extraida.json inválido: ${String(e).slice(0, 80)}`, oc);
+        .run(`data_extraida.json inválido: ${String(e).slice(0, 500)}`, oc);
       logPipeline(db, oc, 5, "reconcile", "ERROR", "JSON inválido");
       result.errores++;
       result.detalles.push(`✗ OC ${oc}: data_extraida.json inválido`);
@@ -233,10 +233,10 @@ export async function run(): Promise<StepResult> {
       }
     } catch (e) {
       db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_SAP', error_msg=? WHERE orden_compra=?`)
-        .run(String(e).slice(0, 250), oc);
-      logPipeline(db, oc, 5, "reconcile", "ERROR", String(e).slice(0, 120));
+        .run(String(e).slice(0, 1000), oc);
+      logPipeline(db, oc, 5, "reconcile", "ERROR", String(e).slice(0, 1000));
       result.errores++;
-      result.detalles.push(`✗ OC ${oc}: ${String(e).slice(0, 120)}`);
+      result.detalles.push(`✗ OC ${oc}: ${String(e).slice(0, 500)}`);
     }
   }
 

@@ -347,12 +347,16 @@ async function runMicrosoft(config: ReturnType<typeof getConfig>): Promise<StepR
     const stagingFolderId = await getOrCreateInboxChildFolder(token, config.emailUser, config.stagingFolderName);
     const sandraFolderId  = await getOrCreateInboxChildFolder(token, config.emailUser, config.manualReviewFolderName);
 
-    const messages = await listInboxMessages(token, config.emailUser, config.processUnreadOnly);
+    // El INBOX es la fuente de verdad: se procesa TODO lo que esté en la bandeja,
+    // sin importar isRead. Los clientes reprocesan moviendo el correo de vuelta al
+    // INBOX; un correo ya leído debe procesarse igual. El pipeline drena el inbox
+    // moviendo cada correo a staging tras procesarlo.
+    const messages = await listInboxMessages(token, config.emailUser, false);
     if (messages.length === 0) {
-      result.detalles.push(`No hay ${config.processUnreadOnly ? "no leídos en INBOX" : "correos en INBOX"}`);
+      result.detalles.push("No hay correos en INBOX");
       return result;
     }
-    result.detalles.push(`Revisando INBOX: ${messages.length} ${config.processUnreadOnly ? "no leído(s)" : "correo(s)"}`);
+    result.detalles.push(`Revisando INBOX: ${messages.length} correo(s)`);
 
     const createdFolders = new Set<string>();
 
@@ -576,22 +580,23 @@ export async function run(): Promise<StepResult> {
     const createdFolders = new Set<string>();
 
     try {
+      // El INBOX es la fuente de verdad: se procesa TODO lo que esté en la bandeja,
+      // sin importar el flag de leído/no leído. Los clientes reprocesan un correo
+      // moviéndolo de vuelta al INBOX; el flag \Seen no debe impedirlo.
+      // El pipeline drena el inbox moviendo cada correo a staging tras procesarlo.
       const messages = [];
       for await (const msg of imapClient.fetch("1:*", {
         uid: true, flags: true, envelope: true, source: true,
       })) {
-        if (config.processUnreadOnly && msg.flags?.has("\\Seen")) continue;
         messages.push(msg);
       }
 
       if (messages.length === 0) {
-        const motive = config.processUnreadOnly ? "no leídos en INBOX" : "correos en INBOX";
-        result.detalles.push(`No hay ${motive}`);
+        result.detalles.push("No hay correos en INBOX");
         return result;
       }
 
-      const modeLabel = config.processUnreadOnly ? "no leído(s)" : "correo(s)";
-      result.detalles.push(`Revisando INBOX: ${messages.length} ${modeLabel}`);
+      result.detalles.push(`Revisando INBOX: ${messages.length} correo(s)`);
 
       for (const msg of messages) {
         try {

@@ -94,7 +94,7 @@ export async function run(): Promise<StepResult> {
     try {
       aiData = JSON.parse(fs.readFileSync(markerPath, "utf8")) as SapB1Order;
     } catch (e) {
-      const msg = `data_extraida.json inválido: ${String(e).slice(0, 80)}`;
+      const msg = `data_extraida.json inválido: ${String(e).slice(0, 500)}`;
       db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_CATALOG', error_msg=? WHERE orden_compra=?`).run(msg, oc);
       logPipeline(db, oc, 3, "sap_catalog", "ERROR", msg);
       result.errores++;
@@ -121,8 +121,8 @@ export async function run(): Promise<StepResult> {
         db.prepare(`
           UPDATE pedidos_maestro SET estado='ERROR_CATALOG', error_msg=?, items_excluidos=?, fase_actual=3
           WHERE orden_compra=?
-        `).run(msg.slice(0, 250), JSON.stringify(missing.map(l => l.SupplierCatNum)), oc);
-        logPipeline(db, oc, 3, "sap_catalog", "ERROR", msg.slice(0, 120));
+        `).run(msg.slice(0, 1000), JSON.stringify(missing.map(l => l.SupplierCatNum)), oc);
+        logPipeline(db, oc, 3, "sap_catalog", "ERROR", msg.slice(0, 1000));
         result.errores++;
         result.detalles.push(`✗ OC ${oc} → ERROR_CATALOG: ${msg}`);
         continue;
@@ -149,10 +149,10 @@ export async function run(): Promise<StepResult> {
 
     } catch (e) {
       db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_CATALOG', error_msg=? WHERE orden_compra=?`)
-        .run(String(e).slice(0, 250), oc);
-      logPipeline(db, oc, 3, "sap_catalog", "ERROR", String(e).slice(0, 120));
+        .run(String(e).slice(0, 1000), oc);
+      logPipeline(db, oc, 3, "sap_catalog", "ERROR", String(e).slice(0, 1000));
       result.errores++;
-      result.detalles.push(`✗ OC ${oc}: ${String(e).slice(0, 120)}`);
+      result.detalles.push(`✗ OC ${oc}: ${String(e).slice(0, 500)}`);
     }
   }
 

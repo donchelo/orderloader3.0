@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { runPipeline, isPipelineRunning } from "@/lib/pipeline";
+import { runPipeline, isPipelineRunning, getPipelineLiveState } from "@/lib/pipeline";
 import { getDb, logTrigger } from "@/lib/db";
 
 function getClientIp(req: NextRequest): string {
@@ -11,7 +11,10 @@ function getClientIp(req: NextRequest): string {
 }
 
 export async function GET() {
-  return new Response(JSON.stringify({ running: isPipelineRunning() }), {
+  // Devuelve el estado vivo de la corrida actual para que la UI pueda mostrar
+  // el progreso aunque la corrida la haya disparado otra pestaña o un cron.
+  const live = getPipelineLiveState();
+  return new Response(JSON.stringify({ running: isPipelineRunning(), live }), {
     headers: { "Content-Type": "application/json" },
   });
 }

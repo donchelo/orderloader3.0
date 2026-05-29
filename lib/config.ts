@@ -25,8 +25,12 @@ export interface Config {
   emailPass: string;
   emailHost: string;
   emailPort: number;
-  // true → solo procesa correos NO LEÍDOS (FlexoImpresos)
-  // false → procesa todo el inbox sin importar estado (Tamaprint)
+  /**
+   * @deprecated Ya no se usa. El INBOX es la fuente de verdad: step0 procesa TODO
+   * lo que esté en la bandeja sin importar el estado leído/no leído, para que los
+   * clientes puedan reprocesar moviendo el correo de vuelta al INBOX.
+   * Se mantiene el campo para no romper el parsing de PROCESS_UNREAD_ONLY en .env.
+   */
   processUnreadOnly: boolean;
 
   // Microsoft Graph API (solo si emailProvider === "microsoft")

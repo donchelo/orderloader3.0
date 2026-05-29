@@ -151,7 +151,7 @@ export async function run(): Promise<StepResult> {
       order = JSON.parse(fs.readFileSync(markerPath, "utf8")) as SapB1Order;
     } catch (e) {
       db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_PARSE', error_msg=? WHERE orden_compra=?`)
-        .run(`data_extraida.json no es JSON válido: ${String(e).slice(0, 80)}`, oc);
+        .run(`data_extraida.json no es JSON válido: ${String(e).slice(0, 500)}`, oc);
       logPipeline(db, oc, 2, "validate", "ERROR", "JSON inválido");
       result.errores++;
       result.detalles.push(`✗ OC ${oc} → ERROR_PARSE: JSON inválido`);
@@ -167,8 +167,8 @@ export async function run(): Promise<StepResult> {
       db.prepare(`
         UPDATE pedidos_maestro SET estado='ERROR_PARSE', fase_actual=2, error_msg=?, validacion_resultado=?
         WHERE orden_compra=?
-      `).run(`${erroresFormato.length} error(es): ${erroresFormato[0].slice(0, 80)}`, resultado, oc);
-      logPipeline(db, oc, 2, "validate", "ERROR", erroresFormato[0].slice(0, 120));
+      `).run(`${erroresFormato.length} error(es): ${erroresFormato[0].slice(0, 500)}`, resultado, oc);
+      logPipeline(db, oc, 2, "validate", "ERROR", erroresFormato[0].slice(0, 1000));
       result.errores++;
       result.detalles.push(`✗ OC ${oc} → ERROR_PARSE: ${erroresFormato[0]}`);
       try { await sendAlertEmail(`[ERROR OrderLoader] OC ${oc} — Validación fallida`, buildErrorHtml(oc, cliente, erroresFormato)); } catch { /* ignore */ }
@@ -209,17 +209,9 @@ export async function run(): Promise<StepResult> {
         result.errores++;
         result.detalles.push(`✗ OC ${oc} → ERROR_DUPLICADO (DocEntry ${doc.DocEntry})`);
 
-        const html = `<html><body style="font-family:Arial,sans-serif"><div style="background:#dc3545;color:white;padding:14px 20px">
-          <h2>OC Duplicada en SAP B1</h2></div>
-          <div style="padding:16px"><table>
-            <tr><td><b>OC:</b></td><td>${oc}</td></tr>
-            <tr><td><b>Cliente:</b></td><td>${cliente}</td></tr>
-            <tr><td><b>DocEntry SAP:</b></td><td>${doc.DocEntry}</td></tr>
-            <tr><td><b>DocNum SAP:</b></td><td>${doc.DocNum}</td></tr>
-          </table>
-          <p>La OC fue marcada como <b>ERROR_DUPLICADO</b> y no se subirá a SAP.</p>
-          </div></body></html>`;
-        try { await sendAlertEmail(`[ERROR OrderLoader] OC ${oc} — Duplicada en SAP B1`, html); } catch { /* ignore */ }
+        // No se envía alerta inmediata aquí: step6 ya notifica ERROR_DUPLICADO
+        // con el template completo (DocNum, cliente, precios). Dos emails por el mismo
+        // evento generan ruido sin agregar información adicional.
 
       } else {
         const resultado = JSON.stringify({ errores: [], n_items: n });
@@ -240,7 +232,7 @@ export async function run(): Promise<StepResult> {
         UPDATE pedidos_maestro SET estado='PARSE_VALIDO', fase_actual=2, error_msg=NULL, validacion_resultado=?
         WHERE orden_compra=?
       `).run(resultado, oc);
-      logPipeline(db, oc, 2, "validate", "WARN", `Error SAP en check duplicado: ${String(e).slice(0, 80)}`);
+      logPipeline(db, oc, 2, "validate", "WARN", `Error SAP en check duplicado: ${String(e).slice(0, 500)}`);
       result.procesados++;
       result.detalles.push(`⚠ OC ${oc} → PARSE_VALIDO (formato OK; error SAP al verificar duplicado: ${String(e).slice(0, 60)})`);
     }

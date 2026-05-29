@@ -108,7 +108,7 @@ export async function run(): Promise<StepResult> {
     try {
       aiData = JSON.parse(fs.readFileSync(markerPath, "utf8")) as SapB1Order;
     } catch (e) {
-      const msg = `data_extraida.json inválido: ${String(e).slice(0, 80)}`;
+      const msg = `data_extraida.json inválido: ${String(e).slice(0, 500)}`;
       db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_SAP', error_msg=? WHERE orden_compra=?`).run(msg, oc);
       logPipeline(db, oc, 4, "upload", "ERROR", msg);
       result.errores++;
@@ -153,8 +153,8 @@ export async function run(): Promise<StepResult> {
     if (lineas.length === 0) {
       const msg = `Todos los artículos excluidos por catálogo: ${catalogExcluded.join(", ")}`;
       db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_ITEMS', error_msg=? WHERE orden_compra=?`)
-        .run(msg.slice(0, 250), oc);
-      logPipeline(db, oc, 4, "upload", "ERROR", msg.slice(0, 120));
+        .run(msg.slice(0, 1000), oc);
+      logPipeline(db, oc, 4, "upload", "ERROR", msg.slice(0, 1000));
       result.errores++;
       result.detalles.push(`✗ OC ${oc} → ERROR_ITEMS: ${msg}`);
       continue;
@@ -192,9 +192,9 @@ export async function run(): Promise<StepResult> {
         if (!itemCode) {
           db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_SAP', error_msg=? WHERE orden_compra=?`)
             .run(errorMsg.slice(0, 1000), oc);
-          logPipeline(db, oc, 4, "upload", "ERROR", errorMsg.slice(0, 120));
+          logPipeline(db, oc, 4, "upload", "ERROR", errorMsg.slice(0, 1000));
           result.errores++;
-          result.detalles.push(`✗ OC ${oc}: ${errorMsg.slice(0, 120)}`);
+          result.detalles.push(`✗ OC ${oc}: ${errorMsg.slice(0, 500)}`);
           break;
         }
         const idx = lineas.findIndex(l => l.SupplierCatNum === itemCode);
@@ -209,8 +209,8 @@ export async function run(): Promise<StepResult> {
       if (lineas.length === 0 && excluidos.length > 0) {
         const msg = `Todos los artículos fueron rechazados por SAP: ${excluidos.map(l => l.SupplierCatNum).join(", ")}`;
         db.prepare(`UPDATE pedidos_maestro SET estado='ERROR_SAP', error_msg=? WHERE orden_compra=?`)
-          .run(msg.slice(0, 250), oc);
-        logPipeline(db, oc, 4, "upload", "ERROR", msg.slice(0, 120));
+          .run(msg.slice(0, 1000), oc);
+        logPipeline(db, oc, 4, "upload", "ERROR", msg.slice(0, 1000));
         result.errores++;
         result.detalles.push(`✗ OC ${oc}: ${msg}`);
       }

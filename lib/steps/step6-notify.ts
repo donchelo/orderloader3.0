@@ -13,6 +13,7 @@ import path from "path";
 import nodemailer from "nodemailer";
 import { getConfig } from "../config";
 import { getDb, logPipeline } from "../db";
+import { sendAlertEmail } from "../mailer";
 import { buildSubjectForOrder, buildHtmlForOrder } from "./step6-templates";
 
 const LOGO_PATH = path.resolve(process.cwd(), "public/brand/logos/Export/Logo V1 - Naranja.png");
@@ -24,8 +25,11 @@ export interface StepResult {
   detalles: string[];
 }
 
+// CATALOG_OK se excluye intencionalmente: es un estado intermedio (artículos verificados
+// pero aún no subidos a SAP). Notificarlo causaría falsos positivos cuando SAP está caído
+// y además cerraría el pedido antes de que step4 lo procese.
 const ESTADOS_A_NOTIFICAR = [
-  "VALIDADO", "SAP_MONTADO", "CATALOG_OK",
+  "VALIDADO", "SAP_MONTADO",
   "ERROR_DUPLICADO", "ERROR_ITEMS", "ERROR_SAP", "ERROR_PARSE", "ERROR_VALIDACION", "ERROR_CATALOG",
   "NOTIFICANDO",
 ] as const;
@@ -146,7 +150,7 @@ export async function run(): Promise<StepResult> {
           config.emailUser,
           config.notifyEmail,
           config.notifyCcEmail || undefined,
-          buildSubjectForOrder(row, hasExtraFiles),
+          buildSubjectForOrder(row, hasExtraFiles, config.tenantDisplayName),
           html,
           logoBytes ? [{ name: "logo.png", contentType: "image/png", contentBytes: logoBytes, contentId: "logo" }] : []
         );
@@ -155,7 +159,7 @@ export async function run(): Promise<StepResult> {
           from: config.emailUser,
           to: config.notifyEmail,
           ...(config.notifyCcEmail ? { cc: config.notifyCcEmail } : {}),
-          subject: buildSubjectForOrder(row, hasExtraFiles),
+          subject: buildSubjectForOrder(row, hasExtraFiles, config.tenantDisplayName),
           html,
           attachments: [
             { filename: "logo.png", path: LOGO_PATH, cid: "logo" },
@@ -174,9 +178,17 @@ export async function run(): Promise<StepResult> {
       result.procesados++;
       result.detalles.push(`✓ OC ${oc} → NOTIFICADO`);
     } catch (e) {
-      logPipeline(db, oc, 6, "notify", "ERROR", String(e).slice(0, 120));
+      const errMsg = String(e);
+      logPipeline(db, oc, 6, "notify", "ERROR", errMsg.slice(0, 1000));
       result.errores++;
-      result.detalles.push(`✗ OC ${oc}: ${String(e).slice(0, 80)}`);
+      result.detalles.push(`✗ OC ${oc}: ${errMsg.slice(0, 200)}`);
+      sendAlertEmail(
+        `[OrderLoader/${config.tenantDisplayName}] ✗ Error enviando notificación — OC ${oc}`,
+        `<p>No se pudo enviar el correo de notificación para la orden <strong>${oc}</strong> (${String(row.cliente_nombre || "—")}).</p>
+         <p><strong>Error:</strong></p>
+         <pre style="background:#fde8e8;padding:12px;border-radius:6px;font-size:12px;word-break:break-all">${errMsg.slice(0, 2000)}</pre>
+         <p>El pedido quedará en estado <code>NOTIFICANDO</code> y se reintentará en la próxima corrida del pipeline.</p>`,
+      ).catch(() => {});
     }
   }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { Button, cn } from "@/design-system";
 
 interface StepResult {
@@ -13,16 +13,34 @@ interface StepResult {
   duracionMs: number;
 }
 
+// Las claves DEBEN coincidir con `name` en lib/pipeline.ts STEPS.
 const STEP_LABELS: Record<string, string> = {
-  "download":       "Descargar correos",
-  "parse":          "Extraer pedidos",
-  "validate-parse": "Validar extracción",
-  "sap-query":      "Consultar SAP",
-  "upload":         "Subir a SAP",
-  "reconcile":      "Reconciliar",
-  "notify":         "Notificar clientes",
-  "archive":        "Archivar",
+  "download":     "Descargar correos",
+  "parse":        "Extraer pedidos",
+  "validate":     "Validar extracción",
+  "sap-catalog":  "Consultar catálogo SAP",
+  "upload":       "Subir a SAP",
+  "reconcile":    "Reconciliar",
+  "notify":       "Notificar clientes",
+  "archive":      "Archivar",
 };
+
+const STEP_ORDER = [
+  "download", "parse", "validate", "sap-catalog", "upload", "reconcile", "notify", "archive",
+] as const;
+
+function labelFor(name: string): string {
+  return STEP_LABELS[name] ?? name;
+}
+
+/** Estima el siguiente paso a partir del último completado (el pipeline cicla 0→7 por correo). */
+function nextStepName(results: StepResult[]): string {
+  if (!results.length) return "download";
+  const last = results[results.length - 1].name;
+  const idx = STEP_ORDER.indexOf(last as (typeof STEP_ORDER)[number]);
+  if (idx < 0) return "download";
+  return STEP_ORDER[(idx + 1) % STEP_ORDER.length];
+}
 
 interface Props {
   onComplete?: () => void;
@@ -31,19 +49,68 @@ interface Props {
 export default function RunPipelineButton({ onComplete }: Props) {
   const [running, setRunning]             = useState(false);
   const [stopping, setStopping]           = useState(false);
+  const [attached, setAttached]           = useState(false); // viendo una corrida que no iniciamos por SSE
   const [results, setResults]             = useState<StepResult[]>([]);
-  const [currentStep, setCurrentStep]     = useState<string | null>(null);
   const [error, setError]                 = useState<string | null>(null);
   const [done, setDone]                   = useState(false);
   const [expandedSteps, setExpandedSteps] = useState<Set<number>>(new Set());
 
+  const streamingRef = useRef(false);
+  const pollRef      = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+  }, []);
+
+  // Engancharse a una corrida ya en curso: sondea el estado vivo del servidor
+  // y renderiza el progreso hasta que termine. Cubre cron, otra pestaña o recarga.
+  const attachToRun = useCallback(() => {
+    if (pollRef.current) return; // ya estamos sondeando
+    setAttached(true);
+    setRunning(true);
+    setError(null);
+    setDone(false);
+
+    const poll = async () => {
+      try {
+        const res  = await fetch("/api/pipeline/run");
+        const data = await res.json();
+        if (Array.isArray(data.live?.steps)) setResults(data.live.steps);
+        if (!data.running) {
+          stopPolling();
+          setRunning(false);
+          setAttached(false);
+          setDone(true);
+          onComplete?.();
+        }
+      } catch { /* reintentar en el próximo tick */ }
+    };
+
+    poll();
+    pollRef.current = setInterval(poll, 1500);
+  }, [onComplete, stopPolling]);
+
+  // Al montar: si ya hay una corrida en curso, mostrar su progreso.
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res  = await fetch("/api/pipeline/run");
+        const data = await res.json();
+        if (!cancelled && data.running && !streamingRef.current) attachToRun();
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; stopPolling(); };
+  }, [attachToRun, stopPolling]);
+
   async function handleRun() {
+    streamingRef.current = true;
     setRunning(true);
     setResults([]);
-    setCurrentStep("download");
     setError(null);
     setDone(false);
     setExpandedSteps(new Set());
+    setAttached(false);
 
     try {
       const res = await fetch("/api/pipeline/run", {
@@ -53,9 +120,10 @@ export default function RunPipelineButton({ onComplete }: Props) {
       });
 
       if (res.status === 409) {
-        setError("El pipeline ya está en ejecución. Espera a que termine.");
-        setRunning(false);
-        setCurrentStep(null);
+        // Ya hay una corrida en ejecución → engancharse para mostrar su progreso
+        // en vez de dejar al usuario con un error sin contexto.
+        streamingRef.current = false;
+        attachToRun();
         return;
       }
 
@@ -78,11 +146,8 @@ export default function RunPipelineButton({ onComplete }: Props) {
           const json = JSON.parse(line.slice(6));
 
           if (json.type === "step") {
-            const r: StepResult = json.result;
-            setResults(prev => [...prev, r]);
-            setCurrentStep(r.step < 7 ? Object.keys(STEP_LABELS)[r.step + 1] : null);
+            setResults(prev => [...prev, json.result as StepResult]);
           } else if (json.type === "done") {
-            setCurrentStep(null);
             setDone(true);
             onComplete?.();
           } else if (json.type === "error") {
@@ -93,8 +158,9 @@ export default function RunPipelineButton({ onComplete }: Props) {
     } catch (e) {
       setError(String(e));
     } finally {
-      setRunning(false);
-      setCurrentStep(null);
+      streamingRef.current = false;
+      // Si nos enganchamos (409), el polling controla `running`; no lo apaguemos aquí.
+      if (!pollRef.current) setRunning(false);
     }
   }
 
@@ -115,6 +181,8 @@ export default function RunPipelineButton({ onComplete }: Props) {
     });
   }
 
+  const showPanel = results.length > 0 || running;
+
   return (
     <div className="flex flex-col gap-3">
       {/* Buttons */}
@@ -125,7 +193,7 @@ export default function RunPipelineButton({ onComplete }: Props) {
           variant="primary"
           size="md"
         >
-          {running ? "Ejecutando…" : "▶ Correr Pipeline"}
+          {running ? (attached ? "Pipeline en ejecución…" : "Ejecutando…") : "▶ Correr Pipeline"}
         </Button>
 
         {running && (
@@ -148,18 +216,25 @@ export default function RunPipelineButton({ onComplete }: Props) {
       )}
 
       {/* Progress panel */}
-      {(results.length > 0 || running) && (
+      {showPanel && (
         <div className="border border-erie-black/10 rounded-[1rem] overflow-hidden">
-          <div className="px-4 py-2.5 bg-erie-black/4 border-b border-erie-black/10 text-sm font-semibold">
-            {done
-              ? "Pipeline completado"
-              : stopping
-              ? "Deteniendo tras correo actual…"
-              : "Ejecutando pipeline…"}
+          <div className="px-4 py-2.5 bg-erie-black/4 border-b border-erie-black/10 text-sm font-semibold flex items-center gap-2">
+            {!running && !done && results.length > 0 ? (
+              "Resultado de la última corrida"
+            ) : done ? (
+              "Pipeline completado"
+            ) : stopping ? (
+              "Deteniendo tras correo actual…"
+            ) : (
+              <>
+                <span className="inline-block w-2 h-2 rounded-full bg-moderate-blue animate-pulse" />
+                {attached ? "Pipeline en ejecución (en curso)…" : "Ejecutando pipeline…"}
+              </>
+            )}
           </div>
 
-          {results.map((r) => (
-            <div key={`${r.step}-${r.name}`} className="border-b border-erie-black/5 last:border-0">
+          {results.map((r, i) => (
+            <div key={`${r.step}-${r.name}-${i}`} className="border-b border-erie-black/5 last:border-0">
               <div
                 className={cn(
                   "flex items-center gap-3 px-4 py-2 text-sm",
@@ -169,7 +244,7 @@ export default function RunPipelineButton({ onComplete }: Props) {
                 onClick={() => r.detalles.length > 0 && toggleExpand(r.step)}
               >
                 <span className="font-mono text-xs text-cadet-gray min-w-[1.25rem]">{r.step}</span>
-                <span className="flex-1">{STEP_LABELS[r.name] ?? r.name}</span>
+                <span className="flex-1">{labelFor(r.name)}</span>
                 <span className="text-moderate-blue text-xs">✓ {r.procesados}</span>
                 {r.errores > 0 && <span className="text-hot-orange text-xs">✗ {r.errores}</span>}
                 {r.saltados > 0 && <span className="text-cadet-gray text-xs">— {r.saltados}</span>}
@@ -186,10 +261,10 @@ export default function RunPipelineButton({ onComplete }: Props) {
             </div>
           ))}
 
-          {running && currentStep && (
+          {running && !done && (
             <div className="flex gap-3 items-center px-4 py-2 text-sm text-cadet-gray">
               <span className="font-mono text-xs min-w-[1.25rem]">…</span>
-              <span>{STEP_LABELS[currentStep] ?? currentStep}…</span>
+              <span>{labelFor(nextStepName(results))}…</span>
             </div>
           )}
         </div>

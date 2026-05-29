@@ -185,9 +185,38 @@ async function notificarPDFNoEmpresa(
   );
 }
 
-// CLIENT_NITS, CLIENT_TEXT_KEYWORDS, detectClientFromPdf importados desde lib/pdf-classify.ts
+/**
+ * Cuando un PDF alcanza el límite de retries, crea un registro de error en la DB
+ * para que step6 lo notifique y step7 archive el correo. Sin esto, el correo queda
+ * indefinidamente en staging sin ningún rastro en el dashboard.
+ */
+function registerParseErrorInDb(
+  db: ReturnType<typeof getDb>,
+  carpetaPath: string,
+  carpetaNombre: string,
+  pdfFile: string,
+  clienteNombre: string,
+  errorMsg: string,
+): void {
+  try {
+    // Clave única: carpeta del correo + nombre del PDF (sin extensión)
+    const pseudoOc = `${carpetaNombre.slice(0, 40)}_${pdfFile.replace(/\.[^.]+$/, "").slice(0, 15)}`;
 
-// CLIENT_NITS, CLIENT_TEXT_KEYWORDS, detectClientFromPdf importados desde lib/pdf-classify.ts
+    // Sub-folder de error: step7 necesita correo_metadata.json para archivar el correo
+    const errorFolder = path.join(carpetaPath, pseudoOc);
+    fs.mkdirSync(errorFolder, { recursive: true });
+    const metaSrc = path.join(carpetaPath, "correo_metadata.json");
+    if (fs.existsSync(metaSrc)) {
+      fs.copyFileSync(metaSrc, path.join(errorFolder, "correo_metadata.json"));
+    }
+
+    db.prepare(`
+      INSERT OR IGNORE INTO pedidos_maestro
+        (nit_cliente, orden_compra, cliente_nombre, estado, error_msg, fase_actual, carpeta_origen)
+      VALUES ('0', ?, ?, 'ERROR_PARSE', ?, 1, ?)
+    `).run(pseudoOc, clienteNombre, errorMsg.slice(0, 250), errorFolder);
+  } catch { /* no bloquear si ya existe el registro */ }
+}
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
@@ -234,8 +263,11 @@ export async function run(): Promise<StepResult> {
       const carpetaPath = path.join(clienteDir, carpetaNombre);
       if (!fs.statSync(carpetaPath).isDirectory()) continue;
 
-      // Solo carpetas de correo (tienen EML). Los sub-folders de OC no lo tienen.
-      if (!fs.existsSync(path.join(carpetaPath, "correo_original.eml"))) continue;
+      // Solo carpetas de correo. IMAP escribe .eml; Microsoft Graph escribe .txt.
+      const isEmailFolder =
+        fs.existsSync(path.join(carpetaPath, "correo_original.eml")) ||
+        fs.existsSync(path.join(carpetaPath, "correo_original.txt"));
+      if (!isEmailFolder) continue;
 
       const pdfs = fs.readdirSync(carpetaPath).filter(f => f.toLowerCase().endsWith(".pdf"));
       if (!pdfs.length) continue;
@@ -322,6 +354,7 @@ export async function run(): Promise<StepResult> {
             if (retries >= 3) {
               fs.writeFileSync(errorPath, status);
               fs.rmSync(retriesPath, { force: true });
+              registerParseErrorInDb(db, carpetaPath, carpetaNombre, pdfFile, clienteInfo?.nombre ?? carpeta, status);
               await sendAlertEmail(
                 `[ERROR OrderLoader] PDF ${pdfFile} — fallo de parseo repetido`,
                 `<p>El archivo <b>${pdfFile}</b> falló ${retries} veces. Último error:</p><pre>${status}</pre>`
@@ -375,6 +408,7 @@ export async function run(): Promise<StepResult> {
           if (retries >= 3) {
             fs.writeFileSync(errorPath, String(e));
             fs.rmSync(retriesPath, { force: true });
+            registerParseErrorInDb(db, carpetaPath, carpetaNombre, pdfFile, carpeta, String(e));
             await sendAlertEmail(
               `[ERROR OrderLoader] PDF ${pdfFile} — fallo repetido`,
               `<p>El archivo <b>${pdfFile}</b> falló ${retries} veces. Último error:</p><pre>${String(e)}</pre>`
