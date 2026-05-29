@@ -32,8 +32,10 @@ jobs:
         run: |
           docker build --platform linux/amd64 --provenance=false --sbom=false \
             -t tamaprint-ol-orderloader:latest .
-          docker save tamaprint-ol-orderloader:latest | gzip > /tmp/ol.tar.gz
-          echo "Imagen comprimida:"; ls -lh /tmp/ol.tar.gz
+          # Guardar en el workspace (ruta relativa) para que scp-action lo deje
+          # en /tmp/ol.tar.gz y no en /tmp/tmp/ol.tar.gz (quirk de rutas absolutas).
+          docker save tamaprint-ol-orderloader:latest | gzip > ol.tar.gz
+          echo "Imagen comprimida:"; ls -lh ol.tar.gz
 
       - name: Copy image to VM
         uses: appleboy/scp-action@master
@@ -41,7 +43,7 @@ jobs:
           host: ${{ secrets.REMOTE_HOST }}
           username: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
-          source: /tmp/ol.tar.gz
+          source: ol.tar.gz
           target: /tmp
 
       - name: Load image and restart (with rollback)
@@ -85,7 +87,10 @@ jobs:
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/health || echo "000")
               if [ "$STATUS" = "200" ]; then
                 echo "✓ Servicio saludable (intento $i)"
+                # Recuperar la imagen vieja (ahora colgante) — clave en disco chico
+                docker image prune -f || true
                 rm -f /tmp/ol.tar.gz /tmp/ol-prev.tar.gz
+                df -h / | tail -1
                 exit 0
               fi
               echo "  intento $i: status=$STATUS"
