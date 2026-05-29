@@ -61,7 +61,7 @@ export interface Config {
 }
 
 const REQUIRED_ENV_BASE: [string, string][] = [
-  ["CRON_SECRET",       "autenticación HTTP Basic Auth"],
+  // CRON_SECRET ya no se usa: el dashboard opera sin auth (sin passwords) en el VM.
   ["EMAIL_USER",        "buzón de correo (mailbox)"],
   ["NOTIFY_EMAIL",      "envío de notificaciones"],
   ["SAP_B1_URL",        "conexión SAP Business One"],

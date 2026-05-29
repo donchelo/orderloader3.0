@@ -123,7 +123,6 @@ Copia `.env.example` a `.env` y completa los valores:
 
 | Variable              | Requerida | Descripción |
 |-----------------------|-----------|-------------|
-| `CRON_SECRET`         | ✅        | Contraseña HTTP Basic Auth para disparar el pipeline |
 | `EMAIL_USER`          | ✅        | Usuario IMAP/SMTP |
 | `EMAIL_PASS`          | ✅        | Contraseña IMAP/SMTP |
 | `EMAIL_HOST`          | ✅        | Servidor IMAP (ej: `imap.tudominio.com`) |
@@ -144,7 +143,7 @@ Copia `.env.example` a `.env` y completa los valores:
 ## 🛡️ Notas de Seguridad
 - El sistema realiza un **backup automático** de la base de datos antes de cada ejecución del pipeline.
 - Las credenciales están en el archivo `.env` (no incluido en el repositorio).
-- El dashboard está protegido con **HTTP Basic Auth** usando `CRON_SECRET` como contraseña.
+- El dashboard opera **sin autenticación** dentro del VM (acceso por red).
 
 ---
 

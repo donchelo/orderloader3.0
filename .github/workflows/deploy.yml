@@ -1,5 +1,10 @@
 name: Deploy OrderLoader to GCP
 
+# El VM tiene disco chico (8.6 GB). Buildear ahí falla con ENOSPC porque la
+# git-dep @ai4u/design-system se reconstruye desde fuente (>1.8 GB transitorios).
+# Solución: buildear la imagen en el runner de GitHub Actions (~14 GB) y
+# transferirla por SSH (docker save → scp → docker load). El VM solo carga y corre.
+
 on:
   push:
     branches:
@@ -12,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm test
@@ -23,57 +28,80 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Deploy con rollback automático
+      - name: Build image on runner
+        run: |
+          docker build --platform linux/amd64 --provenance=false --sbom=false \
+            -t tamaprint-ol-orderloader:latest .
+          docker save tamaprint-ol-orderloader:latest | gzip > /tmp/ol.tar.gz
+          echo "Imagen comprimida:"; ls -lh /tmp/ol.tar.gz
+
+      - name: Copy image to VM
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.REMOTE_HOST }}
+          username: ${{ secrets.REMOTE_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          source: /tmp/ol.tar.gz
+          target: /tmp
+
+      - name: Load image and restart (with rollback)
         uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.REMOTE_HOST }}
           username: ${{ secrets.REMOTE_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
+          command_timeout: 10m
           script: |
             set -e
             cd ~/orderLoader
 
-            # Guardar commit anterior para rollback
-            PREV_COMMIT=$(git rev-parse HEAD)
-            echo "Commit anterior: $PREV_COMMIT"
+            # Respaldo de la imagen en ejecución para rollback (seguro de vida)
+            docker save tamaprint-ol-orderloader:latest | gzip > /tmp/ol-prev.tar.gz \
+              || echo "Sin imagen previa que respaldar"
 
-            git pull origin main
-            NEW_COMMIT=$(git rev-parse HEAD)
-            echo "Commit nuevo: $NEW_COMMIT"
+            # Sincronizar compose/.env (NO se buildea en el VM, solo se necesitan los archivos)
+            git fetch origin main
+            git reset --hard origin/main
 
-            # Liberar espacio antes de construir (evita ENOSPC por imágenes/cache acumulados).
-            # Sin --volumes: la BD vive en un bind mount (.data) y NO se toca.
-            echo "Disco antes de limpiar:"; df -h / | tail -1
+            # Liberar espacio antes de cargar (sin --volumes: la BD bind-mount .data NO se toca)
+            echo "Disco antes:"; df -h / | tail -1
             docker container prune -f
             docker image prune -af
             docker builder prune -af
-            echo "Disco después de limpiar:"; df -h / | tail -1
+            echo "Disco después:"; df -h / | tail -1
 
-            docker compose up -d --build
+            # Cargar la imagen construida en el runner y levantar SIN buildear
+            gunzip -c /tmp/ol.tar.gz | docker load
+            docker compose up -d --no-build
 
-            # Asegurar permisos de la base de datos
-            docker exec -u root orderloader chown -R node:node /app/.data
-            docker exec -u root orderloader chmod -R 777 /app/.data
+            # Permisos de la base de datos
+            docker exec -u root orderloader chown -R node:node /app/.data || true
+            docker exec -u root orderloader chmod -R 777 /app/.data || true
 
-            # Health check post-deploy (esperar hasta 60s)
+            # Health check (hasta 60s)
             echo "Verificando salud del servicio..."
             for i in $(seq 1 12); do
               sleep 5
               STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:3000/api/health || echo "000")
               if [ "$STATUS" = "200" ]; then
                 echo "✓ Servicio saludable (intento $i)"
+                rm -f /tmp/ol.tar.gz /tmp/ol-prev.tar.gz
                 exit 0
               fi
               echo "  intento $i: status=$STATUS"
             done
 
-            # Health check falló → rollback
-            echo "✗ Health check falló. Haciendo rollback a $PREV_COMMIT..."
-            git checkout "$PREV_COMMIT"
-            docker compose up -d --build
-            docker exec -u root orderloader chown -R node:node /app/.data || true
-            docker exec -u root orderloader chmod -R 777 /app/.data || true
-            echo "Rollback completado. Verificando..."
-            sleep 10
-            curl -sf http://localhost:3000/api/health && echo "✓ Rollback exitoso" || echo "⚠ Servicio degradado post-rollback"
+            # Health check falló → rollback a la imagen previa
+            echo "✗ Health check falló. Rollback a imagen anterior..."
+            if [ -f /tmp/ol-prev.tar.gz ]; then
+              gunzip -c /tmp/ol-prev.tar.gz | docker load
+              docker compose up -d --no-build
+              sleep 10
+              curl -sf http://localhost:3000/api/health \
+                && echo "✓ Rollback exitoso" \
+                || echo "⚠ Servicio degradado post-rollback"
+            else
+              echo "⚠ No hay imagen previa para rollback"
+            fi
+            rm -f /tmp/ol.tar.gz /tmp/ol-prev.tar.gz
             exit 1

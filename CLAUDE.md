@@ -40,27 +40,12 @@ Configura `VM_HOST=user@ip` y opcionalmente `VM_PATH=~/ruta/.data` en `.env.loca
 
 **IMPORTANTE:** Nunca correr step 0 localmente — en cualquier tenant conecta al inbox real de producción (IMAP o Microsoft Graph) y puede descargar correos activos.
 
+## Acceso al dashboard
+El dashboard NO tiene autenticación: opera abierto en el VM (sin passwords). El gate
+de auth (`proxy.ts` / `CRON_SECRET`) fue removido — OrderLoader corre directo en el VM
+para Tamaprint sin login.
+
 ## Rotación de Secrets
-
-### CRON_SECRET (HTTP Basic Auth)
-Protege todos los endpoints excepto `/api/health`. Si se compromete, rotar así:
-
-```bash
-# 1. Generar nuevo secret
-openssl rand -base64 32
-
-# 2. Actualizar en la VM
-#    Editar .env en ~/orderLoader/ con el nuevo valor
-
-# 3. Actualizar en GitHub Secrets (Settings → Secrets → CRON_SECRET)
-#    Si el cron de GitHub Actions usa este secret en el script de deploy
-
-# 4. Redeploy
-docker compose up -d --build
-
-# 5. Verificar que el health check siga respondiendo
-curl http://localhost:3000/api/health
-```
 
 ### ANTHROPIC_API_KEY
 Rotar en https://console.anthropic.com/ → API Keys. Actualizar `.env` y redeploy.
