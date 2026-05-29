@@ -88,6 +88,9 @@ export default function Home() {
             </Text>
           </div>
           <div className="ml-auto flex items-center gap-4">
+            <Link href="/audit" className="text-xs text-cadet-gray hover:text-erie-black transition-colors font-mono">
+              Audit →
+            </Link>
             <Link href="/clientes" className="text-xs text-cadet-gray hover:text-erie-black transition-colors font-mono">
               Clientes →
             </Link>
