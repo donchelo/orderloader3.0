@@ -10,7 +10,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "pull-db": "bash scripts/pull-db.sh",
-    "publish:changelog": "tsx scripts/publish-changelog.ts"
+    "publish:changelog": "tsx scripts/publish-changelog.ts",
+    "type-check": "tsc --noEmit"
   },
   "dependencies": {
     "@ai4u/design-system": "github:donchelo/sistemaDiseno",
