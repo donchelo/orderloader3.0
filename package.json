@@ -13,6 +13,7 @@
     "publish:changelog": "tsx scripts/publish-changelog.ts"
   },
   "dependencies": {
+    "@ai4u/design-system": "github:donchelo/sistemaDiseno",
     "@anthropic-ai/sdk": "^0.80.0",
     "@types/mailparser": "^3.4.6",
     "better-sqlite3": "^12.8.0",
