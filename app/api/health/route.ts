@@ -1,7 +1,7 @@
 import { NextResponse, NextRequest } from "next/server";
 import { getConfig } from "@/lib/config";
 import { getDb } from "@/lib/db";
-import { getSapClient, clearSapClient } from "@/lib/sap-client";
+import { getActiveSap, clearActiveSap } from "@/lib/sap-gateway";
 import packageJson from "@/package.json";
 
 export async function GET(req: NextRequest) {
@@ -30,14 +30,15 @@ export async function GET(req: NextRequest) {
   }
 
   // ── SAP ──────────────────────────────────────────────────────────────────────
-  const sapConfigured = !!(config.sapUrl && config.sapUser && config.sapPass && config.sapCompany);
+  const usingBackend = !!(config.sapBackendUrl && config.sapBackendApiKey);
+  const sapConfigured = usingBackend || !!(config.sapUrl && config.sapUser && config.sapPass && config.sapCompany);
   let sapStatus = sapConfigured ? "configured" : "missing_vars";
   let sapError: string | null = null;
 
   if (checkSap && sapConfigured) {
     try {
-      clearSapClient();
-      await getSapClient();
+      clearActiveSap();
+      await getActiveSap();
       sapStatus = "ok";
     } catch (e) {
       sapStatus = "error";
@@ -117,7 +118,8 @@ export async function GET(req: NextRequest) {
       sap: {
         status: sapStatus,
         configured: sapConfigured,
-        url: config.sapUrl || "(no configurado)",
+        mode: usingBackend ? "backend" : "direct",
+        url: usingBackend ? config.sapBackendUrl : (config.sapUrl || "(no configurado)"),
         error: sapError,
       },
       email: {
