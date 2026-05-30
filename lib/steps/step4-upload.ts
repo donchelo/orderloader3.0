@@ -12,7 +12,7 @@
 import fs from "fs";
 import path from "path";
 import { getDb, logPipeline } from "../db";
-import { getSapClient, clearSapClient } from "../sap-client";
+import { getActiveSap, clearActiveSap } from "../sap-gateway";
 import type { SapB1Order } from "./step1-parse";
 import { OrderStatus } from "../constants";
 
@@ -66,10 +66,10 @@ export async function run(): Promise<StepResult> {
 
   let sap;
   try {
-    sap = await getSapClient();
+    sap = await getActiveSap();
   } catch (e) {
     result.detalles.push(`SAP no configurado: ${String(e)}`);
-    clearSapClient();
+    clearActiveSap();
     return result;
   }
 
